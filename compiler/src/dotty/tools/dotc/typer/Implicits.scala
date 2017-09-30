@@ -573,6 +573,78 @@ trait Implicits { self: Typer =>
           EmptyTree
       }
 
+    /** If `formal` is of the form XXXUpdater[R, L, V] where `R` is a Record and `L` a String singleton,
+      *  synthesize an updater.
+      *  Here, XXX is UpperBound or Polymorphic
+      */
+    def synthesizedUpdater(updaterModule: Symbol, formal: Type)(implicit ctx: Context): Tree = {
+
+      // Traverse the tree of existing refinements
+      // - if the added label already exists, overwrite it's type
+      // - if no such label is found, just add a refinement witht he added field
+      // Q: Should this be made tail-recursive?
+      def upsertRefinement(recordTpe: Type, name: Name, info: Type): Type = {
+        recordTpe match {
+          case RefinedType(parent, oldName, oldInfo) =>
+            if (name eq oldName)
+              // overwrite with the new info
+              RefinedType(parent, name, info)
+            else
+              // go deeper and add back this refinement to the updated parent
+              // (This is the part that is currently not tail-recursive)
+              RefinedType(upsertRefinement(parent, name, info), oldName, oldInfo)
+          case parent: TypeRef => {
+            // add the new field as a refinement
+            // TODO: check that the parent's class declaration does't already contain a member with that name
+            // In the case of Records we are safe, but what if we want to supply the "Updateable" trait?
+            // Or if someone subclasses the records? Should we make them final?
+            RefinedType(parent, name, info)
+          }
+        }
+      }
+
+      formal.argTypes match {
+        case recordTpe :: labelTpe :: valueTpe :: Nil => {
+          // TODO: insert checks that the type params have the right form
+
+          labelTpe match {
+            case ConstantType(Constant(label: String)) => {
+              // convert the String singleton to a TermName
+              val labelName = termName(label)
+              recordTpe match {
+                case tp: TypeVar => {
+                  // In the RecordOps method, we will have the TypeVar R that is linked to the actual record type
+                  val origin = tp.stripTypeVar
+
+                  val outTpe = upsertRefinement(origin, labelName, valueTpe)
+
+                  // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
+                  // such an updater with Out type member set
+                  ref(updaterModule)
+                    .select(nme.apply)
+                    .appliedToTypes(List(recordTpe, labelTpe, valueTpe, outTpe))
+                    .appliedToNone
+                    .withPos(pos)
+                }
+                case _ => {
+                  error(where => i"This case is currently not supported - $where")
+                  EmptyTree
+                }
+              }
+            }
+            case _ => {
+              error(where => i"The added label must be a constant - $where")
+              return EmptyTree
+            }
+          }
+        }
+        case _ =>
+          error(where => i"Updater takes exactly 3 type arguments -  $where")
+          println("wrong number of arguments")
+          EmptyTree
+      }
+    }
+
     /** If `formal` is of the form Eq[T, U], where no `Eq` instance exists for
      *  either `T` or `U`, synthesize `Eq.eqAny[T, U]` as solution.
    	 */
@@ -637,6 +709,10 @@ trait Implicits { self: Typer =>
             synthesizedClassTag(formalValue)
           else if (formalValue.isRef(defn.EqClass))
             synthesizedEq(formalValue)
+          else if (formalValue.isRef(defn.UpperBoundUpdaterClass))
+            synthesizedUpdater(defn.UpperBoundUpdaterModule, formalValue)
+          else if (formalValue.isRef(defn.PolymorphicUpdaterClass))
+            synthesizedUpdater(defn.PolymorphicUpdaterModule, formalValue)
           else
             EmptyTree
         if (!arg.isEmpty) arg
