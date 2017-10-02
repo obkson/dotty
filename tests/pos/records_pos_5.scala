@@ -5,7 +5,7 @@ object records_pos_5 {
   def addField[R <: Record{val l: String}](r: R)(implicit up: Updater[R, "l", Int]): up.Out = {
     // access old field
     val l1: String = r.l
-    println(l1)
+    println(l1) // "one"
 
     // update with new type
     val s = r.update("l", 1)
@@ -28,8 +28,5 @@ object records_pos_5 {
     // access field with new type
     val l: Int = s.l
     println(l) // 1
-
-    // acces another field and checkout the error msg!
-    // println(s.foo)
   }
 }

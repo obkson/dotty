@@ -589,6 +589,7 @@ class Definitions {
   def PolymorphicUpdaterClass(implicit ctx: Context) = PolymorphicUpdaterType.symbol.asClass
   def PolymorphicUpdaterModule(implicit ctx: Context) = PolymorphicUpdaterClass.companionModule
   lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
+  def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
 
   lazy val XMLTopScopeModuleRef = ctx.requiredModuleRef("scala.xml.TopScope")
 

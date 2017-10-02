@@ -593,54 +593,58 @@ trait Implicits { self: Typer =>
               // go deeper and add back this refinement to the updated parent
               // (This is the part that is currently not tail-recursive)
               RefinedType(upsertRefinement(parent, name, info), oldName, oldInfo)
-          case parent: TypeRef => {
-            // add the new field as a refinement
-            // TODO: check that the parent's class declaration does't already contain a member with that name
-            // In the case of Records we are safe, but what if we want to supply the "Updateable" trait?
-            // Or if someone subclasses the records? Should we make them final?
+          case parent => {
+            // we have reached the parent, so we can just add our new field here
             RefinedType(parent, name, info)
           }
         }
       }
 
       formal.argTypes match {
-        case recordTpe :: labelTpe :: valueTpe :: Nil => {
-          // TODO: insert checks that the type params have the right form
+        // Check that we got all params
+        case recordTpeArg :: labelTpeArg :: valueTpeArg :: Nil => {
 
-          labelTpe match {
+          // check that the label argument is a String singleton
+          labelTpeArg match {
             case ConstantType(Constant(label: String)) => {
-              // convert the String singleton to a TermName
+              // convert the label to a some TermName
               val labelName = termName(label)
-              recordTpe match {
-                case tp: TypeVar => {
-                  // In the RecordOps method, we will have the TypeVar R that is linked to the actual record type
-                  val origin = tp.stripTypeVar
 
-                  val outTpe = upsertRefinement(origin, labelName, valueTpe)
+              // If we get the RecordOps R type variable it needs to be stripped to get the actual type
+              val stripped = recordTpeArg.stripTypeVar
+              // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
+              val recordTpe = stripped.underlyingIfProxy match {
+                case TypeBounds(_, hi) => hi
+                case tp => stripped
+              }
 
-                  // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
-                  // such an updater with Out type member set
-                  ref(updaterModule)
-                    .select(nme.apply)
-                    .appliedToTypes(List(recordTpe, labelTpe, valueTpe, outTpe))
-                    .appliedToNone
-                    .withPos(pos)
-                }
-                case _ => {
-                  error(where => i"This case is currently not supported - $where")
-                  EmptyTree
-                }
+              // Check that the stripped type is of type dotty.record.Record
+              if (recordTpe.underlyingClassRef(true).classSymbol eq defn.RecordClass) {
+
+                // calculate updated Record type (or at least the upper bound)
+                val outTpe = upsertRefinement(recordTpe, labelName, valueTpeArg)
+
+                // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
+                // such an updater with Out type member set
+                ref(updaterModule)
+                  .select(nme.apply)
+                  .appliedToTypes(List(recordTpeArg, labelTpeArg, valueTpeArg, outTpe))
+                  .appliedToNone
+                  .withPos(pos)
+
+              } else {
+                error(where => i"Invalid Record argument type for $where")
+                EmptyTree
               }
             }
             case _ => {
-              error(where => i"The added label must be a constant - $where")
-              return EmptyTree
+              error(where => i"Invalid label argument for $where, must be a String singleton.")
+              EmptyTree
             }
           }
         }
         case _ =>
-          error(where => i"Updater takes exactly 3 type arguments -  $where")
-          println("wrong number of arguments")
+          error(where => i"Invalid arguments for $where, ${updaterModule.show} takes exactly 3 type arguments")
           EmptyTree
       }
     }
