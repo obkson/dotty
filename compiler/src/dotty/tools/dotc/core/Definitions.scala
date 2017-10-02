@@ -582,6 +582,15 @@ class Definitions {
 
     def Eq_eqAny(implicit ctx: Context) = EqModule.requiredMethod(nme.eqAny)
 
+  lazy val UpperBoundUpdaterType = ctx.requiredClassRef("dotty.records.UpperBoundUpdater")
+  def UpperBoundUpdaterClass(implicit ctx: Context) = UpperBoundUpdaterType.symbol.asClass
+  def UpperBoundUpdaterModule(implicit ctx: Context) = UpperBoundUpdaterClass.companionModule
+  lazy val PolymorphicUpdaterType = ctx.requiredClassRef("dotty.records.PolymorphicUpdater")
+  def PolymorphicUpdaterClass(implicit ctx: Context) = PolymorphicUpdaterType.symbol.asClass
+  def PolymorphicUpdaterModule(implicit ctx: Context) = PolymorphicUpdaterClass.companionModule
+  lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
+  def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
+
   lazy val XMLTopScopeModuleRef = ctx.requiredModuleRef("scala.xml.TopScope")
 
   // Annotation base classes

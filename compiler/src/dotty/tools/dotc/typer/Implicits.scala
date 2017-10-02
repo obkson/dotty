@@ -573,6 +573,82 @@ trait Implicits { self: Typer =>
           EmptyTree
       }
 
+    /** If `formal` is of the form XXXUpdater[R, L, V] where `R` is a Record and `L` a String singleton,
+      *  synthesize an updater.
+      *  Here, XXX is UpperBound or Polymorphic
+      */
+    def synthesizedUpdater(updaterModule: Symbol, formal: Type)(implicit ctx: Context): Tree = {
+
+      // Traverse the tree of existing refinements
+      // - if the added label already exists, overwrite it's type
+      // - if no such label is found, just add a refinement witht he added field
+      // Q: Should this be made tail-recursive?
+      def upsertRefinement(recordTpe: Type, name: Name, info: Type): Type = {
+        recordTpe match {
+          case RefinedType(parent, oldName, oldInfo) =>
+            if (name eq oldName)
+              // overwrite with the new info
+              RefinedType(parent, name, info)
+            else
+              // go deeper and add back this refinement to the updated parent
+              // (This is the part that is currently not tail-recursive)
+              RefinedType(upsertRefinement(parent, name, info), oldName, oldInfo)
+          case parent => {
+            // we have reached the parent, so we can just add our new field here
+            RefinedType(parent, name, info)
+          }
+        }
+      }
+
+      formal.argTypes match {
+        // Check that we got all params
+        case recordTpeArg :: labelTpeArg :: valueTpeArg :: Nil => {
+
+          // check that the label argument is a String singleton
+          labelTpeArg match {
+            case ConstantType(Constant(label: String)) => {
+              // convert the label to a some TermName
+              val labelName = termName(label)
+
+              // If we get the RecordOps R type variable it needs to be stripped to get the actual type
+              val stripped = recordTpeArg.stripTypeVar
+              // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
+              val recordTpe = stripped.underlyingIfProxy match {
+                case TypeBounds(_, hi) => hi
+                case tp => stripped
+              }
+
+              // Check that the stripped type is of type dotty.record.Record
+              if (recordTpe.underlyingClassRef(true).classSymbol eq defn.RecordClass) {
+
+                // calculate updated Record type (or at least the upper bound)
+                val outTpe = upsertRefinement(recordTpe, labelName, valueTpeArg)
+
+                // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
+                // such an updater with Out type member set
+                ref(updaterModule)
+                  .select(nme.apply)
+                  .appliedToTypes(List(recordTpeArg, labelTpeArg, valueTpeArg, outTpe))
+                  .appliedToNone
+                  .withPos(pos)
+
+              } else {
+                error(where => i"Invalid Record argument type for $where")
+                EmptyTree
+              }
+            }
+            case _ => {
+              error(where => i"Invalid label argument for $where, must be a String singleton.")
+              EmptyTree
+            }
+          }
+        }
+        case _ =>
+          error(where => i"Invalid arguments for $where, ${updaterModule.show} takes exactly 3 type arguments")
+          EmptyTree
+      }
+    }
+
     /** If `formal` is of the form Eq[T, U], where no `Eq` instance exists for
      *  either `T` or `U`, synthesize `Eq.eqAny[T, U]` as solution.
    	 */
@@ -637,6 +713,10 @@ trait Implicits { self: Typer =>
             synthesizedClassTag(formalValue)
           else if (formalValue.isRef(defn.EqClass))
             synthesizedEq(formalValue)
+          else if (formalValue.isRef(defn.UpperBoundUpdaterClass))
+            synthesizedUpdater(defn.UpperBoundUpdaterModule, formalValue)
+          else if (formalValue.isRef(defn.PolymorphicUpdaterClass))
+            synthesizedUpdater(defn.PolymorphicUpdaterModule, formalValue)
           else
             EmptyTree
         if (!arg.isEmpty) arg
