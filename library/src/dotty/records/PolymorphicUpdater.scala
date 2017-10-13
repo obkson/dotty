@@ -7,6 +7,6 @@ class PolymorphicUpdater[R <: Record, L <: String, V] {
 
 object PolymorphicUpdater {
   def apply[R <: Record, L <: String, V, Out0 <: Record]() = new PolymorphicUpdater[R, L, V] {
-    type Out = Out0
+     type Out = Out0
   }
 }

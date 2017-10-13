@@ -2,7 +2,7 @@ import dotty.records._
 
 object records_pos_5 {
 
-  def addField[R <: Record{val l: String}](r: R)(implicit up: Updater[R, "l", Int]): up.Out = {
+  def addField[R <: Record{val l: String} : Updater["l", Int]](r: R) = {
     // access old field
     val l1: String = r.l
     println(l1) // "one"

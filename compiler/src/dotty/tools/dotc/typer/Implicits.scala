@@ -581,7 +581,7 @@ trait Implicits { self: Typer =>
 
       // Traverse the tree of existing refinements
       // - if the added label already exists, overwrite it's type
-      // - if no such label is found, just add a refinement witht he added field
+      // - if no such label is found, just add a refinement with the added field
       // Q: Should this be made tail-recursive?
       def upsertRefinement(recordTpe: Type, name: Name, info: Type): Type = {
         recordTpe match {
@@ -599,11 +599,10 @@ trait Implicits { self: Typer =>
           }
         }
       }
-
-      formal.argTypes match {
+      // dealias to make Updater => PolymorphicUpdater application go through
+      formal.dealias.argTypes match {
         // Check that we got all params
         case recordTpeArg :: labelTpeArg :: valueTpeArg :: Nil => {
-
           // check that the label argument is a String singleton
           labelTpeArg match {
             case ConstantType(Constant(label: String)) => {
@@ -615,7 +614,7 @@ trait Implicits { self: Typer =>
               // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
               val recordTpe = stripped.underlyingIfProxy match {
                 case TypeBounds(_, hi) => hi
-                case tp => stripped
+                case _ => stripped
               }
 
               // Check that the stripped type is of type dotty.record.Record
@@ -643,9 +642,10 @@ trait Implicits { self: Typer =>
             }
           }
         }
-        case _ =>
+        case _ => {
           error(where => i"Invalid arguments for $where, ${updaterModule.show} takes exactly 3 type arguments")
           EmptyTree
+        }
       }
     }
 
