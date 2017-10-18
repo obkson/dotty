@@ -20,7 +20,7 @@ object records_pos_5 {
 
   def main(args: Array[String]): Unit = {
     // create
-    val r = Record("l" -> "one").asInstanceOf[Record {val l: String}]
+    val r = Record("l" -> "one") // .asInstanceOf[Record {val l: String}]
 
     // update using polymorphic function to change type of `l` from String to Int
     val s = addField(r)

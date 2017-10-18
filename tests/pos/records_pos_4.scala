@@ -15,7 +15,7 @@ object records_pos_4 {
 
   def main(args: Array[String]): Unit = {
     // create
-    val r = Record("l1" -> "v1").asInstanceOf[Record {val l1: String}]
+    val r = Record("l1" -> "v1") // .asInstanceOf[Record {val l1: String}]
 
     // update using polymorphic function
     val s = addField(r)

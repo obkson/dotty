@@ -5,9 +5,9 @@ import scala.collection.immutable.HashMap
 case class Record(_data: Map[String, Any]) extends Selectable {
   def selectDynamic(name: String): Any = _data(name)
 
-  override def toString = _data.keys
+  override def toString = _data.keys.toList.sorted
     .map(k => s"$k = ${_data(k)}")
-    .mkString("{",", ","}")
+    .mkString("Record{",", ","}")
 }
 
 object Record {

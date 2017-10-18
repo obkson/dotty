@@ -7,7 +7,7 @@ import dotty.tools.dotc.ast.tpd
 import dotty.tools.dotc.ast.untpd
 import dotty.tools.dotc.core.Constants.Constant
 import dotty.tools.dotc.core.Contexts.Context
-import dotty.tools.dotc.core.Names.{Name, TermName}
+import dotty.tools.dotc.core.Names.{Name, TermName, termName}
 import dotty.tools.dotc.core.StdNames._
 import dotty.tools.dotc.core.Types._
 import dotty.tools.dotc.core.Decorators._
@@ -66,7 +66,7 @@ trait Dynamic { self: Typer with Applications =>
       }
     }
 
-     tree.fun match {
+    tree.fun match {
       case Select(qual, name) if !isDynamicMethod(name) =>
         typedDynamicApply(qual, name, Nil)
       case TypeApply(Select(qual, name), targs) if !isDynamicMethod(name) =>
@@ -161,6 +161,51 @@ trait Dynamic { self: Typer with Applications =>
         fail("is polymorphic")
       case tpe =>
         fail(i"has an unsupported type: $tpe")
+    }
+  }
+
+  def handleRecordConstruction(tree: Tree)(implicit ctx: Context): Tree = {
+    val Apply(Select(_, nme.apply), args) = tree
+
+    def getFieldOrError(lblTree: Tree, valTree: Tree) =  lblTree match {
+      case Literal(lblConst) if (lblConst.tpe eq defn.StringType) =>
+        Right(termName(lblConst.stringValue), valTree.tpe.widenDealias) // Should we really widen this?
+      case _ =>
+        Left(s"The label ${lblTree.show} is invalid, must be String literal")
+    }
+
+    def getFieldsFromSeqLiteralElem(tree: Tree): Either[String, (Name, Type)] = tree match {
+      case Apply(TypeApply(Select(Apply(TypeApply(_ /*ArrowAssoc*/, _), List(lblTree)), _ /*->*/), _), List(valTree)) =>
+        // TODO: add guard to check that this really is an ArrowAssoc
+        getFieldOrError(lblTree, valTree)
+      case Apply(TypeApply(Select(tuple2, nme.apply), _), List(lblTree, valTree))
+        if tuple2.symbol eq defn.TupleType(2).symbol.asClass.companionModule =>
+          getFieldOrError(lblTree, valTree)
+      case _ =>
+        Left(s"Invalid argument ${tree.show}, expected (String, Any)")
+    }
+
+    // get list of errors and list of successfully extracted fields
+    val (errMsgs, fields) = args match {
+      case Typed(SeqLiteral(seq, _), _) :: _ => {
+        seq.foldRight((List[String](), List[(Name, Type)]())) { (elem, acc) =>
+          getFieldsFromSeqLiteralElem(elem) match {
+            case Left(err) => (err :: acc._1, acc._2) // add error to error list
+            case Right(field) => (acc._1, field :: acc._2) // add field to field list
+          }
+        }
+      }
+      case _ => {
+        (List(s"Invalid argument ${tree.show}"), List())
+      }
+    }
+
+    if (errMsgs.isEmpty) {
+      val labels = fields.map(_._1)
+      val types = fields.map(_._2)
+      tree.asInstance(RefinedType.make(defn.RecordType, labels, types))
+    } else {
+      errorTree(tree, em"Could not cast record type:\n  ${errMsgs.mkString("\n  ")}")
     }
   }
 }

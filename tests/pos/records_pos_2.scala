@@ -4,7 +4,7 @@ object records_pos_2 {
 
   def main(args: Array[String]): Unit = {
     // create
-    val r = Record("l1" -> "v1").asInstanceOf[Record {val l1: String}]
+    val r = Record("l1" -> "v1") // .asInstanceOf[Record {val l1: String}]
 
     // update with new field
     val s = r.update("l2", 2)

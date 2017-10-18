@@ -2,13 +2,35 @@ import dotty.records._
 
 object records_pos_0 {
 
+  def addFoo[R <: Record : Updater["foo", String]](r: R) = r.update("foo", "Foo")
+
   def main(args: Array[String]): Unit = {
     // create
-    val r = Record("l" -> "v").asInstanceOf[Record {val l: String}]
+    // val r = Record("a" -> "A", "nested" -> Record("foo" -> "foo"))
+    // val r = Record(("a", "A"), "b"->"B", ("c"-> Record("d"->"D")), "2" -> 23)
+    val r = Record("a"->"A")
 
     // typed access
-    val l: String = r.l
+    val a = r.a
+    /*
+    val b = r.b
+    val c = r.c
+    val d = r.c.d
+    val two = r.`2`
 
-    println(l) // v
+    val s = addFoo(r)
+    */
+    println(r)
+    println(a) // A
+
+    /*
+    println(b) // B
+    println(c)
+    println(d) // D
+    println(two) // 23
+
+    println(s)
+    println(s.foo) // Foo
+  */
   }
 }
