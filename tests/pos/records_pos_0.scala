@@ -23,6 +23,18 @@ object records_pos_0 {
     println(r)
     println(a) // A
 
+    // val (foo, bar) = r.project("foo", "bar")
+
+
+    List[Any]("hej", 123) match {
+      case (foo: String) :: (bar: Int) :: Nil => {
+        println(s"ok! $foo, $bar")
+      }
+      case _ => {
+        println(":(")
+      }
+    }
+
     /*
     println(b) // B
     println(c)
