@@ -674,7 +674,7 @@ trait Implicits { self: Typer =>
           }
         }
         case _ => {
-          error(where => i"Invalid arguments for $where, ${updaterModule.show} takes exactly 3 type arguments")
+          error(where => i"Invalid arguments for $where, expected exactly 3 type arguments")
           EmptyTree
         }
       }

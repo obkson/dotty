@@ -1,25 +1,42 @@
 import dotty.records._
 
-trait RecordField[L <: String, V] {
-  def label: L
-  def value: V
-}
-
-object RecordField {
-  def apply[V](l: String, v: V) = new RecordField[l.type, V] {
-    def label = l
-    def value = v
-  }
-}
-
 object records_pos_8 {
-
-  def getUpdater[L <: String, V, R <: Record](r: R, field: RecordField[L, V])(implicit up: PolymorphicUpdater[R, L, V]) = up
-  //def getUpdater2[R <: Record, L <: Label, V](r: R, label: L, value: V)(implicit up: PolymorphicUpdater[R, L#Out, V]) = up
 
   def main(args: Array[String]): Unit = {
 
-    getUpdater(Record(), RecordField("age", 29))
-    //getUpdater2(Record(), Label("age"), 29)
+    val r = Record.fromJSON("""{"foo": 42}""")
+    println(r)
   }
+}
+
+// Any Map[String -> Any] can be casted to a record, or throw runtime error
+
+// val r = new Record(map).safeCast[Record{val foo: Int}]
+
+
+// JSONFormatter[Record] = new JSONFormatter[Record] {
+//
+// }
+
+
+implicit object PersonFormat extends JsonFormat[Person] {
+
+  def write[J](x: Person, builder: Builder[J]): Unit = {
+    builder.beginObject()
+    builder.addField("name", x.name)
+    builder.addField("value", x.value)
+    builder.endObject()
+  }
+
+  def read[J](jsOpt: Option[J], unbuilder: Unbuilder[J]): Person =
+    jsOpt match {
+      case Some(js) =>
+        unbuilder.beginObject(js)
+        val name = unbuilder.readField[String]("name")
+        val value = unbuilder.readField[Int]("value")
+        unbuilder.endObject()
+        Person(name, value)
+      case None =>
+        deserializationError("Expected JsObject but found None")
+    }
 }
