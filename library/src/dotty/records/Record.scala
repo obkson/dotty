@@ -21,10 +21,7 @@ object Record extends Dynamic {
   def applyDynamicNamed(name: String)(args: (String, Any)*) = create(args: _*)
 
   implicit class RecordOps[R <: Record](val r: R) extends AnyVal {
-    def update[V](label: String, value: V)
-                 (implicit
-                  ub: UpperBoundUpdater[R, label.type, V],
-                  poly: PolymorphicUpdater[R, label.type, V]): ub.Out & poly.Out =
-      new Record(r._data + (label -> value)).asInstanceOf[ub.Out & poly.Out]
+    def extend[S <: Record](s: S)(implicit ev: Disjoint[R, S]): R & S =
+      new Record(r._data ++ s._data).asInstanceOf[R & S]
   }
 }

@@ -3,10 +3,10 @@ package dotc
 package typer
 
 import core._
-import ast.{Trees, untpd, tpd, TreeInfo}
+import ast.{TreeInfo, Trees, tpd, untpd}
 import util.Positions._
-import util.Stats.{track, record, monitored}
-import printing.{Showable, Printer}
+import util.Stats.{monitored, record, track}
+import printing.{Printer, Showable}
 import printing.Texts._
 import Contexts._
 import Types._
@@ -31,7 +31,10 @@ import Trees._
 import Hashable._
 import util.Property
 import config.Config
+
+import annotation.tailrec
 import config.Printers.{implicits, implicitsDetailed, typr}
+
 import collection.mutable
 
 /** Implicit resolution */
@@ -573,108 +576,37 @@ trait Implicits { self: Typer =>
           EmptyTree
       }
 
-    /** If `formal` is of the form XXXUpdater[R, L, V] where `R` is a Record and `L` a String singleton,
-      *  synthesize an updater.
-      *  Here, XXX is UpperBound or Polymorphic
+    /** If `formal` is of the form Disjoint[R, S] where `R` and `S` are disjoint Record types,
+      *  synthesize evidence of this fact.
       */
-    def synthesizedUpdater(updaterModule: Symbol, formal: Type)(implicit ctx: Context): Tree = {
+    def synthesizedDisjoint(formal: Type)(implicit ctx: Context): Tree = {
 
-      // Traverse the tree of existing refinements
-      // - if the added label already exists, overwrite it's type
-      // - if no such label is found, just add a refinement with the added field
-      // Q: Should this be made tail-recursive?
-      def upsertRefinement(recordTpe: Type, name: Name, info: Type): Type = {
-        recordTpe match {
-          case RefinedType(parent, oldName, oldInfo) =>
-            if (name eq oldName)
-              // overwrite with the new info
-              RefinedType(parent, name, info)
-            else
-              // go deeper and add back this refinement to the updated parent
-              // (This is the part that is currently not tail-recursive)
-              RefinedType(upsertRefinement(parent, name, info), oldName, oldInfo)
-          case parent => {
-            // we have reached the parent, so we can just add our new field here
-            RefinedType(parent, name, info)
-          }
-        }
+      def isConcreteRecordTpe(arg: Type) = arg.underlyingClassRef(true).classSymbol eq defn.RecordClass
+
+      def proveDisjoint(arg1: Type, arg2: Type) = {
+        if (isConcreteRecordTpe(arg1) && isConcreteRecordTpe(arg2) && labels(arg1).toSet.intersect(labels(arg2).toSet).isEmpty)
+          ref(defn.DisjointModule)
+            .select(nme.apply)
+            .appliedToTypes(List(arg1, arg2))
+            .appliedToNone
+            .withPos(pos)
+        else
+          EmptyTree
       }
 
-      // dealias to make Updater => PolymorphicUpdater application go through
-      formal.dealias.argTypes match {
-        // Check that we got all params
-        case recordTpeArg :: labelTpeArg :: valueTpeArg :: Nil => {
-
-          println(s"looking for $updaterModule")
-          println("---- Record Arg ----")
-          println(recordTpeArg)
-          println(recordTpeArg.stripTypeVar)
-          println(recordTpeArg.stripTypeVar.underlyingIfProxy)
-
-          println()
-          println("---- Label Arg ----")
-          println(labelTpeArg)
-          println(labelTpeArg.dealias)
-          println(labelTpeArg.widen)
-          println(labelTpeArg.widenDealias)
-          println(labelTpeArg.stripTypeVar)
-
-          println()
-          println("---- Value Arg ----")
-          println(valueTpeArg)
-
-          println()
-
-          // check that the label argument is a String singleton
-          labelTpeArg.dealias match {
-            case ConstantType(Constant(label: String)) => {
-              // convert the label to a some TermName
-              val labelName = termName(label)
-
-              // If we get the RecordOps R type variable it needs to be stripped to get the actual type
-              val stripped = recordTpeArg.stripTypeVar
-
-              // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
-              val recordTpe = stripped.underlyingIfProxy match {
-                case TypeBounds(_, hi) => hi
-                case _ => stripped
-              }
-              println("Input Record:")
-              println(recordTpe)
-
-              // Check that the stripped type is of type dotty.record.Record
-              if (recordTpe.underlyingClassRef(true).classSymbol eq defn.RecordClass) {
-
-                // calculate updated Record type (or at least the upper bound)
-                val outTpe = upsertRefinement(recordTpe, labelName, valueTpeArg)
-
-                println("Output Record:")
-                println(outTpe)
-                // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
-                // such an updater with Out type member set
-                ref(updaterModule)
-                  .select(nme.apply)
-                  .appliedToTypes(List(recordTpeArg, labelTpeArg, valueTpeArg, outTpe))
-                  .appliedToNone
-                  .withPos(pos)
-
-              } else {
-                println(recordTpe)
-                println(recordTpe.dealias)
-                println(recordTpe.widen)
-
-                error(where => i"Invalid Record argument type for $where")
-                EmptyTree
-              }
-            }
-            case _ => {
-              error(where => i"Invalid label argument for $where, must be a String singleton.")
-              EmptyTree
-            }
-          }
+      def labels(ref: Type) = {
+        @tailrec def go(ref: Type, acc: List[Name]): List[Name] = ref match {
+          case RefinedType(parent, label, _) => go(parent, label :: acc)
+          case _ => acc // Q: can we be sure that we have reached an empty record here?
         }
+        go(ref, List())
+      }
+
+      // dealias to make DisjointFrom => Disjoint application go through
+      formal.dealias.argTypes match {
+        case arg1 :: arg2 :: Nil => proveDisjoint(arg1.stripTypeVar, arg2.stripTypeVar)
         case _ => {
-          error(where => i"Invalid arguments for $where, expected exactly 3 type arguments")
+          error(where => i"Invalid arguments for $where, expected exactly 2 type arguments")
           EmptyTree
         }
       }
@@ -744,10 +676,8 @@ trait Implicits { self: Typer =>
             synthesizedClassTag(formalValue)
           else if (formalValue.isRef(defn.EqClass))
             synthesizedEq(formalValue)
-          else if (formalValue.isRef(defn.UpperBoundUpdaterClass))
-            synthesizedUpdater(defn.UpperBoundUpdaterModule, formalValue)
-          else if (formalValue.isRef(defn.PolymorphicUpdaterClass))
-            synthesizedUpdater(defn.PolymorphicUpdaterModule, formalValue)
+          else if (formalValue.isRef(defn.DisjointClass))
+            synthesizedDisjoint(formalValue)
           else
             EmptyTree
         if (!arg.isEmpty) arg

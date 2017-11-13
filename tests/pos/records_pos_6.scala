@@ -2,27 +2,35 @@ import dotty.records._
 
 object records_pos_6 {
 
+  def addFooBar[R <: Record : DisjointFrom[Record{val foo: String; val bar: String}]](r: R) = {
+    val f = Record(foo="foo": String)
+    val b = Record(bar="bar": String)
 
-  def addBar[R <: Record](r: R)(implicit p2: PolymorphicUpdater[R, "bar", String]): p2.Out = {
-    val s = r.update("bar", "bar")
-    s
-  }
+    val s1 = r.extend(f)
+    val s2 = s1.extend(b) // error: Cannot prove that the record types are disjoint.
+    // We only have proof that
+    //   R
+    // is disjoint from
+    //   Record{foo: String, bar: String}
 
-  def addBarToFoo[R <: Record{val foo: String}](r: R)(implicit p1: PolymorphicUpdater[R, "bar", String]): p1.Out = {
-    println(r.foo)
-    val s = addBar(r) // how can we force calculation here? If we add an UpperBoundUpdater to addBar, then we will loose calculation there instead.
-                      // We are merely deferring the problem by introducing the UpperBoundUpdater to the RecordOps updaters.
-                      // To introduce another function layer (addBar), we would have to create a 3rd updater class to force calculation etc...
-    println(s.foo)
-    println(s.bar)
-    s
+    // Cannot derive that
+    //   R & Record{foo: String}
+    // is disjoint from
+    //   Record{bar: String}
+
+    // Is there some way to design our implicit resolution mechanism so that we can detect this case?
+
+    s2
   }
 
   def main(args: Array[String]): Unit = {
+    // create
+    val r = Record()
 
-    val r = Record(foo="foo")
-    val s = addBarToFoo(r)
+    // update using polymorphic function
+    val s = addFooBar(r)
 
-    println(s)
+    println(s.foo) // foo
+    println(s.bar) // bar
   }
 }

@@ -2,31 +2,32 @@ import dotty.records._
 
 object records_pos_5 {
 
-  def addField[R <: Record{val l: String} : Updater["l", Int]](r: R) = {
-    // access old field
-    val l1: String = r.l
-    println(l1) // "one"
+  def addBar[R <: Record : DisjointFrom[Record{val bar: String}]](r: R) = {
+    val s = Record(bar="bar": String)
+    r.extend(s)
+  }
 
-    // update with new type
-    val s = r.update("l", 1)
-
-    // access the updated field
-    val l2: Int = s.l
-    println(l2) // 1
-
-    // return the updated record
+  def addBarToFoo[R <: Record{val foo: String} : DisjointFrom[Record{val bar: String}]](r: R) = {
+    println(r.foo) // foo
+    val s = addBar(r)
+    println(s.foo) // foo
+    println(s.bar) // bar
     s
   }
 
   def main(args: Array[String]): Unit = {
     // create
-    val r = Record(l="one") // .asInstanceOf[Record {val l: String}]
+    val r = Record(foo="foo")
 
-    // update using polymorphic function to change type of `l` from String to Int
-    val s = addField(r)
+    // update using polymorphic function
+    val s = addBarToFoo(r)
 
-    // access field with new type
-    val l: Int = s.l
-    println(l) // 1
+    // access old field
+    val f: String = s.foo
+    // access new field
+    val b: String = s.bar
+
+    println(f) // foo
+    println(b) // bar
   }
 }
