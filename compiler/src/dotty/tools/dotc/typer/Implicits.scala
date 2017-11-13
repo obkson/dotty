@@ -599,23 +599,48 @@ trait Implicits { self: Typer =>
           }
         }
       }
+
       // dealias to make Updater => PolymorphicUpdater application go through
       formal.dealias.argTypes match {
         // Check that we got all params
         case recordTpeArg :: labelTpeArg :: valueTpeArg :: Nil => {
+
+          println(s"looking for $updaterModule")
+          println("---- Record Arg ----")
+          println(recordTpeArg)
+          println(recordTpeArg.stripTypeVar)
+          println(recordTpeArg.stripTypeVar.underlyingIfProxy)
+
+          println()
+          println("---- Label Arg ----")
+          println(labelTpeArg)
+          println(labelTpeArg.dealias)
+          println(labelTpeArg.widen)
+          println(labelTpeArg.widenDealias)
+          println(labelTpeArg.stripTypeVar)
+
+          println()
+          println("---- Value Arg ----")
+          println(valueTpeArg)
+
+          println()
+
           // check that the label argument is a String singleton
-          labelTpeArg match {
+          labelTpeArg.dealias match {
             case ConstantType(Constant(label: String)) => {
               // convert the label to a some TermName
               val labelName = termName(label)
 
               // If we get the RecordOps R type variable it needs to be stripped to get the actual type
               val stripped = recordTpeArg.stripTypeVar
+
               // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
               val recordTpe = stripped.underlyingIfProxy match {
                 case TypeBounds(_, hi) => hi
                 case _ => stripped
               }
+              println("Input Record:")
+              println(recordTpe)
 
               // Check that the stripped type is of type dotty.record.Record
               if (recordTpe.underlyingClassRef(true).classSymbol eq defn.RecordClass) {
@@ -623,6 +648,8 @@ trait Implicits { self: Typer =>
                 // calculate updated Record type (or at least the upper bound)
                 val outTpe = upsertRefinement(recordTpe, labelName, valueTpeArg)
 
+                println("Output Record:")
+                println(outTpe)
                 // create a tree representing `XXXUpdater.apply[R, L, V, Out]()` that will return
                 // such an updater with Out type member set
                 ref(updaterModule)
@@ -632,6 +659,10 @@ trait Implicits { self: Typer =>
                   .withPos(pos)
 
               } else {
+                println(recordTpe)
+                println(recordTpe.dealias)
+                println(recordTpe.widen)
+
                 error(where => i"Invalid Record argument type for $where")
                 EmptyTree
               }

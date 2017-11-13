@@ -15,7 +15,7 @@ import core.Symbols._
 import core.Definitions
 import Inferencing._
 import ErrorReporting._
-import dotty.tools.dotc.reporting.diagnostic.messages.ReassignmentToVal
+import dotty.tools.dotc.reporting.diagnostic.messages.{NotAMember, ReassignmentToVal}
 
 object Dynamic {
   def isDynamicMethod(name: Name): Boolean =
@@ -62,10 +62,16 @@ trait Dynamic { self: Typer with Applications =>
           case arg => namedArgTuple("", arg)
         }
         val args1 = if (dynName == nme.applyDynamic) args else namedArgs
-        typedApply(untpd.Apply(coreDynamic(qual, dynName, name, targs), args1), pt)
+        val dyn = typedApply(untpd.Apply(coreDynamic(qual, dynName, name, targs), args1), pt)
+        if (qual.symbol eq defn.RecordModule)
+          if (name != nme.apply)
+            errorTree(tree, NotAMember(qual.tpe, name, "value"))
+          else
+            typedRecordConstructor(dyn, args)
+        else
+          dyn
       }
     }
-
     tree.fun match {
       case Select(qual, name) if !isDynamicMethod(name) =>
         typedDynamicApply(qual, name, Nil)
@@ -164,48 +170,26 @@ trait Dynamic { self: Typer with Applications =>
     }
   }
 
-  def handleRecordConstruction(tree: Tree)(implicit ctx: Context): Tree = {
-    val Apply(Select(_, nme.apply), args) = tree
+  def typedRecordConstructor(tree: Tree, args: List[untpd.Tree])(implicit ctx: Context): Tree = {
+    type Field = (Name, Type)
 
-    def getFieldOrError(lblTree: Tree, valTree: Tree) =  lblTree match {
-      case Literal(lblConst) if (lblConst.tpe eq defn.StringType) =>
-        Right(termName(lblConst.stringValue), valTree.tpe.widenDealias) // Should we really widen this?
+    def getFieldOrError(fld: untpd.Tree) = fld match {
+      case NamedArg(argName, arg) =>
+        Right(Tuple2(argName, arg.tpe))
       case _ =>
-        Left(s"The label ${lblTree.show} is invalid, must be String literal")
+        Left(s"The field ${fld.show} has no label")
     }
 
-    def getFieldsFromSeqLiteralElem(tree: Tree): Either[String, (Name, Type)] = tree match {
-      case Apply(TypeApply(Select(Apply(TypeApply(_ /*ArrowAssoc*/, _), List(lblTree)), _ /*->*/), _), List(valTree)) =>
-        // TODO: add guard to check that this really is an ArrowAssoc
-        getFieldOrError(lblTree, valTree)
-      case Apply(TypeApply(Select(tuple2, nme.apply), _), List(lblTree, valTree))
-        if tuple2.symbol eq defn.TupleType(2).symbol.asClass.companionModule =>
-          getFieldOrError(lblTree, valTree)
-      case _ =>
-        Left(s"Invalid argument ${tree.show}, expected (String, Any)")
-    }
+    val foes = args.map(getFieldOrError)
+    val fields: List[Field] = foes.flatMap { case Right(fld) => Some(fld); case _ => None }
+    val errors = foes.flatMap { case Left(err) => Some(err); case _ => None }
 
-    // get list of errors and list of successfully extracted fields
-    val (errMsgs, fields) = args match {
-      case Typed(SeqLiteral(seq, _), _) :: _ => {
-        seq.foldRight((List[String](), List[(Name, Type)]())) { (elem, acc) =>
-          getFieldsFromSeqLiteralElem(elem) match {
-            case Left(err) => (err :: acc._1, acc._2) // add error to error list
-            case Right(field) => (acc._1, field :: acc._2) // add field to field list
-          }
-        }
-      }
-      case _ => {
-        (List(s"Invalid argument ${tree.show}"), List())
-      }
-    }
-
-    if (errMsgs.isEmpty) {
+    if (errors.isEmpty) {
       val labels = fields.map(_._1)
       val types = fields.map(_._2)
       tree.asInstance(RefinedType.make(defn.RecordType, labels, types))
     } else {
-      errorTree(tree, em"Could not cast record type:\n  ${errMsgs.mkString("\n  ")}")
+      errorTree(tree, em"Could not cast record type:\n  ${errors.mkString("\n  ")}")
     }
   }
 }

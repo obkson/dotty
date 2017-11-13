@@ -591,6 +591,8 @@ class Definitions {
   def PolymorphicUpdaterModule(implicit ctx: Context) = PolymorphicUpdaterClass.companionModule
   lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
   def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
+
+
   def RecordModule(implicit ctx: Context) = RecordClass.companionModule
   // Needed for class record constructor
   lazy val ArrowAssocType = ctx.requiredClassRef("scala.Predef.ArrowAssoc")

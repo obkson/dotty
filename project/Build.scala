@@ -118,7 +118,7 @@ object Build {
       "-feature",
       "-deprecation",
       "-encoding", "UTF8",
-      "-language:existentials,higherKinds,implicitConversions"
+      "-language:existentials,higherKinds,implicitConversions,dynamics"
     ),
 
     javacOptions ++= Seq("-Xlint:unchecked", "-Xlint:deprecation"),

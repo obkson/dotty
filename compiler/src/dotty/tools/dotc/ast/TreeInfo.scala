@@ -4,7 +4,7 @@ package ast
 
 import core._
 import Flags._, Trees._, Types._, Contexts._
-import Names._, StdNames._, NameOps._, Decorators._, Symbols._
+import Names._, StdNames._, NameOps._, Decorators._, Symbols._, Constants._
 import util.HashSet
 import typer.ConstFold
 
@@ -667,15 +667,6 @@ trait TypedTreeInfo extends TreeInfo[Type] { self: Trees.Instance[Type] =>
           false
       }
       !tree.symbol.exists && tree.isTerm && hasRefinement(tree.qualifier.tpe)
-    case _ =>
-      false
-  }
-
-  /** Is this a call to dotty.records.Record.apply ?
-    */
-  def isRecordConstructor(tree: Tree)(implicit ctx: Context) = tree match {
-    case Apply(Select(qualifier, nme.apply), _) =>
-      qualifier.symbol eq defn.RecordModule
     case _ =>
       false
   }
