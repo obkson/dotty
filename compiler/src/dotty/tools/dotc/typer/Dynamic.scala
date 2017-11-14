@@ -72,7 +72,8 @@ trait Dynamic { self: Typer with Applications =>
           dyn
       }
     }
-    tree.fun match {
+
+     tree.fun match {
       case Select(qual, name) if !isDynamicMethod(name) =>
         typedDynamicApply(qual, name, Nil)
       case TypeApply(Select(qual, name), targs) if !isDynamicMethod(name) =>

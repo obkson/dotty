@@ -671,7 +671,6 @@ trait TypedTreeInfo extends TreeInfo[Type] { self: Trees.Instance[Type] =>
       false
   }
 
-
   /** Structural tree comparison (since == on trees is reference equality).
    *  For the moment, only Ident, Select, Literal, Apply and TypeApply are supported
    */

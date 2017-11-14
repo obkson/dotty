@@ -3,10 +3,10 @@ package dotc
 package typer
 
 import core._
-import ast.{TreeInfo, Trees, tpd, untpd}
+import ast.{Trees, untpd, tpd, TreeInfo}
 import util.Positions._
-import util.Stats.{monitored, record, track}
-import printing.{Printer, Showable}
+import util.Stats.{track, record, monitored}
+import printing.{Showable, Printer}
 import printing.Texts._
 import Contexts._
 import Types._
@@ -31,10 +31,8 @@ import Trees._
 import Hashable._
 import util.Property
 import config.Config
-
 import annotation.tailrec
 import config.Printers.{implicits, implicitsDetailed, typr}
-
 import collection.mutable
 
 /** Implicit resolution */
