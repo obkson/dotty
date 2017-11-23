@@ -2,12 +2,12 @@ import dotty.records._
 
 object records_pos_6 {
 
-  def addFooBar[R <: Record : DisjointFrom[Record{val foo: String; val bar: String}]](r: R) = {
+  def addFooBar[R <: Record](r: R)(implicit ev: Ext[R, Record{val foo: String; val bar: String}]) = {
     val f = Record(foo="foo": String)
     val b = Record(bar="bar": String)
 
-    val s1 = r.extend(f)
-    val s2 = s1.extend(b) // error: Cannot prove that the record types are disjoint.
+    val s1 = r ++ f
+    val s2 = s1 ++ b // error: Cannot prove that the record types are disjoint.
     // We only have proof that
     //   R
     // is disjoint from

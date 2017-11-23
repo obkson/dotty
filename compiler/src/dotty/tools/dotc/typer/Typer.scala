@@ -2269,6 +2269,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
           }
         case wtp =>
           if (isStructuralTermSelect(tree)) adapt(handleStructural(tree), pt)
+          else if (isRecordConstructor(tree)) handleRecordConstruction(tree) // NOTE this actually casts to a subtype of pt.
           else pt match {
             case pt: FunProto =>
               adaptToArgs(wtp, pt)

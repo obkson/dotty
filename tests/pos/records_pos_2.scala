@@ -3,10 +3,19 @@ import dotty.records._
 object records_pos_2 {
 
   def main(args: Array[String]): Unit = {
-    // create
-    val r = Record()
-    val s = Record(l="v")
-    val t = r.extend(s)
-    println(t) // Record{l = v}
+    // create two records
+    val r = Record(a="a")
+    val s = Record(b="b")
+
+    // Extend
+    val t = r ++ s
+
+    // access new field with type
+    val a: String = t.a
+    val b: String = t.b
+
+    println(a) // a
+    println(b) // b
   }
+
 }

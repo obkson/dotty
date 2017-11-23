@@ -574,37 +574,110 @@ trait Implicits { self: Typer =>
           EmptyTree
       }
 
-    /** If `formal` is of the form Disjoint[R, S] where `R` and `S` are disjoint Record types,
+    /** If `formal` is of the form Ext[R, S] where `R` and `S` are Record types and R can be safely extended by S,
       *  synthesize evidence of this fact.
       */
-    def synthesizedDisjoint(formal: Type)(implicit ctx: Context): Tree = {
+    def synthesizedExt(formal: Type, pos: Position, argCtx: Context)(implicit ctx: Context): Tree = {
+      println("=========== EXT SYNTHESIS ==============")
+      println(formal)
 
       def isConcreteRecordTpe(arg: Type) = arg.underlyingClassRef(true).classSymbol eq defn.RecordClass
 
-      def proveDisjoint(arg1: Type, arg2: Type) = {
-        if (isConcreteRecordTpe(arg1) && isConcreteRecordTpe(arg2) && labels(arg1).toSet.intersect(labels(arg2).toSet).isEmpty)
-          ref(defn.DisjointModule)
-            .select(nme.apply)
-            .appliedToTypes(List(arg1, arg2))
-            .appliedToNone
-            .withPos(pos)
-        else
-          EmptyTree
+      def upcastFields(arg: Type): Type = arg match {
+        case RefinedType(parent, label, _) => RefinedType(upcastFields(parent), label, defn.AnyType)
+        case r => r
       }
 
-      def labels(ref: Type) = {
-        @tailrec def go(ref: Type, acc: List[Name]): List[Name] = ref match {
-          case RefinedType(parent, label, _) => go(parent, label :: acc)
+      type Field = (Name, Type)
+
+      def toRow(rec: Type) = {
+        @tailrec def go(rec: Type, acc: List[Field]): List[Field] = rec match {
+          case RefinedType(parent, label, info) => go(parent, (label, info) :: acc)
           case _ => acc // Q: can we be sure that we have reached an empty record here?
         }
-        go(ref, List())
+        go(rec, List())
       }
 
-      // dealias to make DisjointFrom => Disjoint application go through
+      def isExtensibleWith(R: Type, S: Type) = {
+        val map1 = toRow(R).toMap
+        val map2 = toRow(S).toMap
+        val intersection = map1.keySet.intersect(map2.keySet)
+        intersection.forall(label => map2(label) <:< map1(label))
+      }
+
+      def materializeExt(arg1: Type, arg2: Type) =
+        ref(defn.ExtModule)
+          .select(nme.apply)
+          .appliedToTypes(List(arg1, arg2))
+          .appliedToNone
+          .withPos(pos)
+
+      // dealias to make context bound => type class application go through
       formal.dealias.argTypes match {
-        case arg1 :: arg2 :: Nil => proveDisjoint(arg1.stripTypeVar, arg2.stripTypeVar)
+        case rraw :: sraw :: Nil => {
+          val r = rraw.stripTypeVar
+          val s = sraw.stripTypeVar
+          println("R: " + r)
+          println("S: " + s)
+          if (isConcreteRecordTpe(s)) {
+            if (isConcreteRecordTpe(r)) {
+              println("Concrete arguments, check extensibility manually")
+              if (isExtensibleWith(r, s)) {
+                materializeExt(rraw, sraw)
+              } else {
+                println("Had concrete record types but R was not extensible with S. Did NOT synthesize evidence")
+                EmptyTree
+              }
+            } else {
+              println("Non-concrete R, search existing evidence")
+              val sAnyFields = upcastFields(s)
+              println("Any S :" + sAnyFields)
+              val isearch = new ImplicitSearch(defn.UnsafeExtType.appliedTo(List(rraw, sAnyFields)), EmptyTree, pos)(argCtx)
+              val hits = isearch.eligible(contextual = true)
+              println("Hits:")
+
+              def isEvidence(cand: Type) = cand.widen.argTypes match {
+                case _ :: candSraw :: Nil => {
+                  val candS = candSraw.stripTypeVar
+                  if (isConcreteRecordTpe(candS)) {
+                    val candSmap = toRow(candS).toMap
+                    toRow(s).forall(field => {
+                      val lbl = field._1
+                      val tpe = field._2
+                      val candTpe = candSmap(lbl)
+                      if (tpe <:< candTpe) {
+                        println("isEvidence!!! " + candS)
+                        true
+                      } else {
+                        println("nope. doesn't cut it: " + candS)
+                        false
+                      }
+                    })
+                  } else {
+                    false
+                  }
+                }
+                case _ => {
+                  false
+                }
+              }
+
+              if (hits.map(cand => cand.ref).exists(isEvidence)) {
+                println("found evidence! Synthesizing Ext")
+                materializeExt(rraw, sraw)
+              }
+              else {
+                println("Could not find evidence....")
+                EmptyTree
+              }
+            }
+          } else {
+            println("S was not concrete")
+            EmptyTree
+          }
+        }
         case _ => {
-          error(where => i"Invalid arguments for $where, expected exactly 2 type arguments")
+          println("wrong numer of arguments")
           EmptyTree
         }
       }
@@ -674,8 +747,8 @@ trait Implicits { self: Typer =>
             synthesizedClassTag(formalValue)
           else if (formalValue.isRef(defn.EqClass))
             synthesizedEq(formalValue)
-          else if (formalValue.isRef(defn.DisjointClass))
-            synthesizedDisjoint(formalValue)
+          else if (formalValue.isRef(defn.ExtClass))
+            synthesizedExt(formalValue, pos, argCtx)
           else
             EmptyTree
         if (!arg.isEmpty) arg
@@ -934,15 +1007,17 @@ trait Implicits { self: Typer =>
 
     /** Find a unique best implicit reference */
     def bestImplicit(contextual: Boolean): SearchResult = {
-      val eligible =
-        if (contextual) ctx.implicits.eligible(wildProto)
-        else implicitScope(wildProto).eligible
-      searchImplicits(eligible, contextual) match {
+      searchImplicits(eligible(contextual), contextual) match {
         case result: SearchSuccess => result
         case result: AmbiguousImplicits => result
         case result: SearchFailure =>
           if (contextual) bestImplicit(contextual = false) else result
       }
+    }
+
+    def eligible(contextual: Boolean) = {
+      if (contextual) ctx.implicits.eligible(wildProto)
+      else implicitScope(wildProto).eligible
     }
 
     def implicitScope(tp: Type): OfTypeImplicits = ctx.runInfo.implicitScope(tp, ctx)

@@ -583,9 +583,12 @@ class Definitions {
     def Eq_eqAny(implicit ctx: Context) = EqModule.requiredMethod(nme.eqAny)
 
   // Record classes
-  lazy val DisjointType = ctx.requiredClassRef("dotty.records.Disjoint")
-  def DisjointClass(implicit ctx: Context) = DisjointType.symbol.asClass
-  def DisjointModule(implicit ctx: Context) = DisjointClass.companionModule
+  lazy val UnsafeExtType = ctx.requiredClassRef("dotty.records.UnsafeExt")
+  def UnsafeExtClass(implicit ctx: Context) = UnsafeExtType.symbol.asClass
+  def UnsafeExtModule(implicit ctx: Context) = UnsafeExtClass.companionModule
+  lazy val ExtType = ctx.requiredClassRef("dotty.records.Ext")
+  def ExtClass(implicit ctx: Context) = ExtType.symbol.asClass
+  def ExtModule(implicit ctx: Context) = ExtClass.companionModule
   lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
   def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
   def RecordModule(implicit ctx: Context) = RecordClass.companionModule
