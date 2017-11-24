@@ -574,6 +574,66 @@ trait Implicits { self: Typer =>
           EmptyTree
       }
 
+    /** If `formal` is of the form RecordTag[R] where `R` is a Record types,
+      *  synthesize evidence of this fact.
+      */
+    def synthesizedRecordTag(formal: Type)(implicit ctx: Context): Tree = {
+
+      def concreteRecordType(tp: Type): Option[Type] = {
+        // If we get the RecordOps R type variable it needs to be stripped to get the actual type
+        val stripped = tp.stripTypeVar
+        println(stripped)
+        // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
+        val ub = stripped.underlyingIfProxy match {
+          case TypeBounds(_, hi) => hi
+          case _ => stripped
+        }
+        // Check that the stripped type is of type dotty.record.Record
+        if (ub.underlyingClassRef(true).classSymbol eq defn.RecordClass)
+          Some(ub)
+        else
+          None
+      }
+
+      def fields(rec: Type): List[(String, Type)] = {
+        @tailrec def go(rec: Type, acc: List[(String, Type)]): List[(String, Type)] = rec match {
+          case RefinedType(parent, label, info) => go(parent, (label.toString, info) :: acc)
+          case _ => acc
+        }
+        go(rec, List())
+      }
+
+      def lblTree(label: String): Tree = Literal(Constant(label))
+      def tagTree(tpe: Type): Tree = {
+        def issueError(msgFn: String => String): Unit = ctx.error(msgFn(""), pos.endPos)
+        inferImplicitArg(defn.ClassTagType.appliedTo(tpe :: Nil), issueError, pos.endPos)
+      }
+      def fieldTree(lt: Tree, tt: Tree): Tree = {
+        typed(untpd.Tuple(List(untpd.TypedSplice(lt), untpd.TypedSplice(tt))).withPos(pos))
+      }
+
+
+      def mkRecordTag(rt: Type, fields: List[Tree]) = {
+        val constructor = ref(defn.RecordTagModule).select(nme.apply).appliedToType(rt)
+        val acall = untpd.Apply(untpd.TypedSplice(constructor), fields.map(untpd.TypedSplice(_))).withPos(pos)
+        typed(acall)
+      }
+
+      formal.argTypes match {
+        case arg :: Nil =>
+          concreteRecordType(arg) match {
+            case Some(rt) => {
+              val fieldTrees = fields(rt).map({ case (lbl, tag) => fieldTree(lblTree(lbl), tagTree(tag)) })
+              println(fieldTrees)
+              mkRecordTag(rt, fieldTrees)
+            }
+            case None => EmptyTree
+          }
+        case _ =>
+          EmptyTree
+      }
+    }
+
     /** If `formal` is of the form Ext[R, S] where `R` and `S` are Record types and R can be safely extended by S,
       *  synthesize evidence of this fact.
       */
@@ -749,6 +809,8 @@ trait Implicits { self: Typer =>
             synthesizedEq(formalValue)
           else if (formalValue.isRef(defn.ExtClass))
             synthesizedExt(formalValue, pos, argCtx)
+          else if (formalValue.isRef(defn.RecordTagClass))
+            synthesizedRecordTag(formalValue)
           else
             EmptyTree
         if (!arg.isEmpty) arg

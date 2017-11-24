@@ -1,5 +1,6 @@
 package dotty.records
 
+import scala.reflect.ClassTag
 import scala.collection.immutable.HashMap
 
 class Record(protected val _data: Map[String, Any]) extends Selectable {
@@ -28,20 +29,20 @@ object Record extends Dynamic {
     create(args: _*)
   }
 
-  def labels[R <: Record]: List[String] = List()
-
   implicit class RecordOps[R <: Record](val r: R) extends AnyVal {
     def ++[S <: Record](s: S)(implicit ev: Ext[R, S]): R & S =
       new Record(r._data ++ s._data).asInstanceOf[R & S]
 
-    def safeCast[S <: Record]: Option[S] = {
-      if (Record.labels[S].forall(l => !r._data.contains(l)))
+    def safeCast[S <: Record](implicit rtag: RecordTag[S]): Option[S] = {
+      println(s"checking if $r can be casted to ${rtag.fields}")
+      def fieldOk(lbl: String, tag: ClassTag[_]) = r._data.get(lbl) match {
+        case Some(v) => tag.unapply(v).isDefined
+        case None => false
+      }
+      if (rtag.fields.forall(fld => fieldOk(fld._1, fld._2)))
         Some(r.asInstanceOf[S])
       else
         None
     }
-
-    def labels(): List[String] = Record.labels[R]
-    def values(): List[Any] = Record.labels[R].map(l => r._data(l))
   }
 }

@@ -592,6 +592,9 @@ class Definitions {
   lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
   def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
   def RecordModule(implicit ctx: Context) = RecordClass.companionModule
+  lazy val RecordTagType = ctx.requiredClassRef("dotty.records.RecordTag")
+  def RecordTagClass(implicit ctx: Context) = RecordTagType.symbol.asClass
+  def RecordTagModule(implicit ctx: Context) = RecordTagClass.companionModule
 
   lazy val XMLTopScopeModuleRef = ctx.requiredModuleRef("scala.xml.TopScope")
 
