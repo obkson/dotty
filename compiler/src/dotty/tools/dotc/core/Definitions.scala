@@ -582,19 +582,24 @@ class Definitions {
 
     def Eq_eqAny(implicit ctx: Context) = EqModule.requiredMethod(nme.eqAny)
 
-  // Record classes
-  lazy val UnsafeExtType = ctx.requiredClassRef("dotty.records.UnsafeExt")
-  def UnsafeExtClass(implicit ctx: Context) = UnsafeExtType.symbol.asClass
-  def UnsafeExtModule(implicit ctx: Context) = UnsafeExtClass.companionModule
-  lazy val ExtType = ctx.requiredClassRef("dotty.records.Ext")
-  def ExtClass(implicit ctx: Context) = ExtType.symbol.asClass
-  def ExtModule(implicit ctx: Context) = ExtClass.companionModule
+  // Record types and classes
   lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
   def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
   def RecordModule(implicit ctx: Context) = RecordClass.companionModule
+
   lazy val RecordTagType = ctx.requiredClassRef("dotty.records.RecordTag")
   def RecordTagClass(implicit ctx: Context) = RecordTagType.symbol.asClass
   def RecordTagModule(implicit ctx: Context) = RecordTagClass.companionModule
+    lazy val SequenceTagType = ctx.requiredClassRef("dotty.records.SequenceTag")
+  def SequenceTagClass(implicit ctx: Context) = SequenceTagType.symbol.asClass
+  def SequenceTagModule(implicit ctx: Context) = SequenceTagClass.companionModule
+
+  lazy val RecordExtensionsModuleRef = ctx.requiredModuleRef("dotty.records.RecordExtensions")
+  def RecordExtensionsModule(implicit ctx: Context) = RecordExtensionsModuleRef.symbol
+  lazy val UnsafeExtType = ctx.requiredTypeRef("dotty.records.RecordExtensions.UnsafeExt")
+  def UnsafeExtSymbol(implicit ctx: Context) = ExtType.symbol
+  lazy val ExtType = ctx.requiredTypeRef("dotty.records.RecordExtensions.Ext")
+  def ExtSymbol(implicit ctx: Context) = ExtType.symbol
 
   lazy val XMLTopScopeModuleRef = ctx.requiredModuleRef("scala.xml.TopScope")
 

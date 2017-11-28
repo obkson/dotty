@@ -674,7 +674,7 @@ trait TypedTreeInfo extends TreeInfo[Type] { self: Trees.Instance[Type] =>
    /** Is this a call to dotty.records.Record.apply ?
     */
   def isRecordConstructor(tree: Tree)(implicit ctx: Context) = tree match {
-    case Apply(Apply(Select(qualifier, nme.applyDynamicNamed), List(Literal(Constant("apply")))), _) =>
+    case Apply(Apply(Select(qualifier, nme.applyDynamicNamed), _), _) =>
       qualifier.symbol eq defn.RecordModule
     case _ =>
       false

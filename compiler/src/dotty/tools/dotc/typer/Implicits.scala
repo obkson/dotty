@@ -606,12 +606,26 @@ trait Implicits { self: Typer =>
       def lblTree(label: String): Tree = Literal(Constant(label))
       def tagTree(tpe: Type): Tree = {
         def issueError(msgFn: String => String): Unit = ctx.error(msgFn(""), pos.endPos)
-        inferImplicitArg(defn.ClassTagType.appliedTo(tpe :: Nil), issueError, pos.endPos)
+        if (tpe.underlyingClassRef(true).classSymbol eq defn.RecordClass)
+          inferImplicitArg(defn.RecordTagType.appliedTo(tpe :: Nil), issueError, pos.endPos)
+        else if (tpe.underlyingClassRef(true).classSymbol.derivesFrom(defn.SeqClass)) {
+          val List(elemTpe) = tpe.argTypes // FIXME: crash boom bang! if not a single type param
+          val seqTag = inferImplicitArg(defn.ClassTagType.appliedTo(tpe :: Nil), issueError, pos.endPos)
+          val elemTag = tagTree(elemTpe)
+          mkSequenceTag(tpe, seqTag, elemTag)
+        }
+        else
+          inferImplicitArg(defn.ClassTagType.appliedTo(tpe :: Nil), issueError, pos.endPos)
       }
       def fieldTree(lt: Tree, tt: Tree): Tree = {
         typed(untpd.Tuple(List(untpd.TypedSplice(lt), untpd.TypedSplice(tt))).withPos(pos))
       }
 
+      def mkSequenceTag(st: Type, seq: Tree, elem: Tree) = {
+        val constructor = ref(defn.SequenceTagModule).select(nme.apply).appliedToType(st)
+        val acall = untpd.Apply(untpd.TypedSplice(constructor), untpd.TypedSplice(seq) :: untpd.TypedSplice(elem) :: Nil).withPos(pos)
+        typed(acall)
+      }
 
       def mkRecordTag(rt: Type, fields: List[Tree]) = {
         val constructor = ref(defn.RecordTagModule).select(nme.apply).appliedToType(rt)
@@ -666,10 +680,9 @@ trait Implicits { self: Typer =>
       }
 
       def materializeExt(arg1: Type, arg2: Type) =
-        ref(defn.ExtModule)
-          .select(nme.apply)
+        ref(defn.RecordExtensionsModule)
+          .select(termName("materializeExt"))
           .appliedToTypes(List(arg1, arg2))
-          .appliedToNone
           .withPos(pos)
 
       // dealias to make context bound => type class application go through
@@ -807,7 +820,7 @@ trait Implicits { self: Typer =>
             synthesizedClassTag(formalValue)
           else if (formalValue.isRef(defn.EqClass))
             synthesizedEq(formalValue)
-          else if (formalValue.isRef(defn.ExtClass))
+          else if (formalValue.isRef(defn.ExtSymbol))
             synthesizedExt(formalValue, pos, argCtx)
           else if (formalValue.isRef(defn.RecordTagClass))
             synthesizedRecordTag(formalValue)

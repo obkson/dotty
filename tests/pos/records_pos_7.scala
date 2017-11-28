@@ -15,8 +15,7 @@ object records_pos_7 {
   */
 
   def updateF[R <: Record](r: R)(implicit ev: Ext[R, Record{val f: B}]): R & Record{val f: B} = {
-    val s = Record(f=new B())
-    val t = r ++ s // no implicit found
+    val t = r ++ Record(f=new B()) // no implicit found
     t
   }
 

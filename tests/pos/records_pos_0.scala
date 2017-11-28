@@ -1,4 +1,5 @@
 import dotty.records._
+import dotty.records.RecordExtensions._
 
 object records_pos_0 {
 

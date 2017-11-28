@@ -18,11 +18,13 @@ class Record(protected val _data: Map[String, Any]) extends Selectable {
 
 object Record extends Dynamic {
   def create(args: (String, Any)*): Record = new Record(HashMap(args: _*))
+
   def applyDynamic(name: String)(args: Any*): Record = {
     // compiler support to check that `name == "apply"`
     create()
   }
-  def applyDynamicNamed(name: String)(args: (String, Any)*): Record = {
+
+  def applyDynamicNamed(name: String)(args: (String, Any)*): Any = {
     // compiler support to
     // - check that `name == "apply"`, and
     // - cast the returned record
@@ -35,9 +37,24 @@ object Record extends Dynamic {
 
     def safeCast[S <: Record](implicit rtag: RecordTag[S]): Option[S] = {
       println(s"checking if $r can be casted to ${rtag.fields}")
-      def fieldOk(lbl: String, tag: ClassTag[_]) = r._data.get(lbl) match {
-        case Some(v) => tag.unapply(v).isDefined
+
+      def fieldOk(lbl: String, tag: ClassTag[_] | RecordTag[_] | SequenceTag[_]) = r._data.get(lbl) match {
+        case Some(v) => valueOk(v, tag)
         case None => false
+      }
+      def valueOk(v: Any, tag: ClassTag[_] | RecordTag[_] | SequenceTag[_]): Boolean = tag match {
+        case ct: ClassTag[_] => ctOk(v, ct)
+        case rt: RecordTag[_] => rtOk(v, rt)
+        case st: SequenceTag[_] => stOk(v, st)
+      }
+      def ctOk(v: Any, tag: ClassTag[_]): Boolean = tag.unapply(v).isDefined
+      def rtOk(v: Any, tag: RecordTag[_]): Boolean = v match {
+        case rec: Record => rec.safeCast(tag).isDefined
+        case _ => false
+      }
+      def stOk(v: Any, tag: SequenceTag[_]): Boolean = v match {
+        case s: Seq[Any] => tag.seq.unapply(s).isDefined && s.forall(e => valueOk(e, tag.elem))
+        case _ => false
       }
       if (rtag.fields.forall(fld => fieldOk(fld._1, fld._2)))
         Some(r.asInstanceOf[S])

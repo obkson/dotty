@@ -27,7 +27,16 @@ object recordtag_pos_2 {
         val zip: Int = s.adress.zip
         println(zip)
       }
-      case None => println("fail")
+      case None => println("safe!!")
     }
+
+    r.safeCast[Record{val adress: Record{val zip: String}}] match {
+      case Some(s) => {
+        val zip: String = s.adress.zip
+        println(zip)
+      }
+      case None => println("what??!!")
+    }
+
   }
 }

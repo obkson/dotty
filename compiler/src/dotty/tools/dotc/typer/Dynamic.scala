@@ -63,6 +63,18 @@ trait Dynamic { self: Typer with Applications =>
         }
         val args1 = if (dynName == nme.applyDynamic) args else namedArgs
         typedApply(untpd.Apply(coreDynamic(qual, dynName, name, targs), args1), pt)
+
+        /*if (qual.symbol eq defn.RecordModule)
+          if (name != nme.apply)
+            errorTree(tree, NotAMember(qual.tpe, name, "value"))
+          else {
+            println(s"supposed to assign type ${pt}")
+            println(args)
+            typedRecordApply(typedApply(untyped, pt), args)
+          }
+        else
+        typedApply(untyped, pt)
+        */
       }
     }
 
@@ -164,37 +176,65 @@ trait Dynamic { self: Typer with Applications =>
     }
   }
 
+  /*
+  def typedRecordApply(tree: Tree, args: List[untpd.Tree])(implicit ctx: Context): Tree = {
+    type Field = (Name, Type)
+
+    def getFieldOrError(fld: untpd.Tree) = fld match {
+      case NamedArg(argName, arg) =>
+        Right(Tuple2(argName, arg.tpe))
+      case _ =>
+        Left(s"The field ${fld.show} has no label")
+    }
+
+    val foes = args.map(getFieldOrError)
+    val fields: List[Field] = foes.flatMap { case Right(fld) => Some(fld); case _ => None }
+    val errors = foes.flatMap { case Left(err) => Some(err); case _ => None }
+
+    if (errors.isEmpty) {
+      val labels = fields.map(_._1)
+      val types = fields.map(_._2)
+      val rt = RefinedType.make(defn.RecordType, labels, types)
+      adapt(tree.asInstance(rt), rt)
+    } else {
+      errorTree(tree, em"Could not cast record type:\n  ${errors.mkString("\n  ")}")
+    }
+  }
+  */
+
   def handleRecordConstruction(tree: Tree)(implicit ctx: Context): Tree = tree match {
-    case Apply(Apply(Select(qual, nme.applyDynamicNamed), List(Literal(Constant("apply")))), List(Typed(SeqLiteral(args, _), _)))
-      if qual.symbol eq defn.RecordModule => {
+    case Apply(Apply(Select(qual, nme.applyDynamicNamed), List(Literal(Constant(name: String)))), List(Typed(SeqLiteral(args, _), _)))
+      if qual.symbol eq defn.RecordModule => name match {
+      case "apply" => {
+        def getFieldOrError(lblTree: Tree, valTree: Tree) = lblTree match {
+          case Literal(lblConst) if lblConst.tpe eq defn.StringType =>
+            Right(termName(lblConst.stringValue), valTree.tpe.widen) // widen to get rid of singletons etc.
+          case _ =>
+            Left(s"Invalid label ${lblTree.show}")
+        }
 
-      def getFieldOrError(lblTree: Tree, valTree: Tree) =  lblTree match {
-        case Literal(lblConst) if lblConst.tpe eq defn.StringType =>
-          Right(termName(lblConst.stringValue), valTree.tpe.widen) // widen to get rid of singletons etc.
-        case _ =>
-          Left(s"Invalid label ${lblTree.show}")
+        def getFieldsFromSeqLiteralElem(tree: Tree): Either[String, (Name, Type)] = tree match {
+          case Apply(TypeApply(Select(tuple2, nme.apply), _), List(lblTree, valTree))
+            if tuple2.symbol eq defn.TupleType(2).symbol.asClass.companionModule =>
+            getFieldOrError(lblTree, valTree)
+          case _ =>
+            Left(s"Invalid argument ${tree.show}, expected (String, Any)")
+        }
+
+        val foes = args.map(getFieldsFromSeqLiteralElem)
+        val fields: List[(Name, Type)] = foes.flatMap { case Right(fld) => Some(fld); case _ => None }
+        val errors = foes.flatMap { case Left(err) => Some(err); case _ => None }
+
+        if (errors.isEmpty) {
+          val labels = fields.map(_._1)
+          val types = fields.map(_._2)
+          val recType = RefinedType.make(defn.RecordType, labels, types)
+          adapt(tree.asInstance(recType), recType)
+        } else {
+          errorTree(tree, em"Could not cast record type:\n  ${errors.mkString("\n  ")}")
+        }
       }
-
-      def getFieldsFromSeqLiteralElem(tree: Tree): Either[String, (Name, Type)] = tree match {
-        case Apply(TypeApply(Select(tuple2, nme.apply), _), List(lblTree, valTree))
-          if tuple2.symbol eq defn.TupleType(2).symbol.asClass.companionModule =>
-          getFieldOrError(lblTree, valTree)
-        case _ =>
-          Left(s"Invalid argument ${tree.show}, expected (String, Any)")
-      }
-
-      val foes = args.map(getFieldsFromSeqLiteralElem)
-      val fields: List[(Name, Type)] = foes.flatMap { case Right(fld) => Some(fld); case _ => None }
-      val errors = foes.flatMap { case Left(err) => Some(err); case _ => None }
-
-      if (errors.isEmpty) {
-        val labels = fields.map(_._1)
-        val types = fields.map(_._2)
-        val recType = RefinedType.make(defn.RecordType, labels, types)
-        tree.asInstance(recType)
-      } else {
-        errorTree(tree, em"Could not cast record type:\n  ${errors.mkString("\n  ")}")
-      }
+      case _ => errorTree(tree, NotAMember(qual.tpe, termName(name), "value"))
     }
     case _ => {
       println("no match")

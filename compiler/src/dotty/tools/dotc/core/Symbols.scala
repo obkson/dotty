@@ -370,6 +370,11 @@ trait Symbols { this: Context =>
 
   def requiredClassRef(path: PreName): TypeRef = requiredClass(path).typeRef
 
+  // def requiredType(path: PreName): TypeSymbol =
+  // base.staticRef(path.toTypeName).requiredSymbol(_.isType).asType
+
+  def requiredTypeRef(path: PreName): TypeRef = base.staticRef(path.toTypeName).requiredSymbol(_.isType).typeRef
+
   /** Get ClassSymbol if class is either defined in current compilation run
    *  or present on classpath.
    *  Returns NoSymbol otherwise. */

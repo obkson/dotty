@@ -2,9 +2,8 @@ import dotty.records._
 
 object records_pos_3 {
 
-  def addFoo[R <: Record](r: R)(implicit ev: Ext[R, Record{val foo: String}]) = {
-    val s = Record(foo="foo")
-    val t = r ++ s
+  def addFoo[R <: Record : Extender[Record{val foo: String}]](r: R) = {
+    val t = r ++ Record(foo="foo")
     println(t.foo) // foo
     t
   }
