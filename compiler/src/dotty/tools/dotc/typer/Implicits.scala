@@ -579,21 +579,9 @@ trait Implicits { self: Typer =>
       */
     def synthesizedRecordTag(formal: Type)(implicit ctx: Context): Tree = {
 
-      def concreteRecordType(tp: Type): Option[Type] = {
-        // If we get the RecordOps R type variable it needs to be stripped to get the actual type
-        val stripped = tp.stripTypeVar
-        println(stripped)
-        // If the underlying type is a bound, get the upper bound, otherwise just return the stripped type
-        val ub = stripped.underlyingIfProxy match {
-          case TypeBounds(_, hi) => hi
-          case _ => stripped
-        }
-        // Check that the stripped type is of type dotty.record.Record
-        if (ub.underlyingClassRef(true).classSymbol eq defn.RecordClass)
-          Some(ub)
-        else
-          None
-      }
+      def concreteRecordType(tp: Type): Option[Type] =
+        if (tp.underlyingClassRef(true).classSymbol eq defn.RecordClass) Some(tp.dealias)
+        else None
 
       def fields(rec: Type): List[(String, Type)] = {
         @tailrec def go(rec: Type, acc: List[(String, Type)]): List[(String, Type)] = rec match {
@@ -635,10 +623,12 @@ trait Implicits { self: Typer =>
 
       formal.argTypes match {
         case arg :: Nil =>
-          concreteRecordType(arg) match {
+          concreteRecordType(fullyDefinedType(arg, "RecordTag argument", pos)) match {
             case Some(rt) => {
+              // println("Its concrete!")
+              // println(rt)
               val fieldTrees = fields(rt).map({ case (lbl, tag) => fieldTree(lblTree(lbl), tagTree(tag)) })
-              println(fieldTrees)
+              // println(fieldTrees)
               mkRecordTag(rt, fieldTrees)
             }
             case None => EmptyTree

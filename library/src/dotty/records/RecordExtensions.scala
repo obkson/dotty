@@ -6,6 +6,6 @@ object RecordExtensions extends Phantom {
 
   type Ext[+R <: Record, S <: Record] <: UnsafeExt[R, S]
 
-  def materializeExt[R <: Record, S <: Record]: Ext[R, S] = assume
+  inline def materializeExt[R <: Record, S <: Record]: Ext[R, S] = assume
 
 }

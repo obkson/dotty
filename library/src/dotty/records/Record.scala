@@ -3,7 +3,7 @@ package dotty.records
 import scala.reflect.ClassTag
 import scala.collection.immutable.HashMap
 
-class Record(protected val _data: Map[String, Any]) extends Selectable {
+class Record(val _data: Map[String, Any]) extends Selectable {
   def selectDynamic(name: String): Any = _data(name)
 
   override def toString: String = _data.keys.toList.sorted
@@ -36,7 +36,7 @@ object Record extends Dynamic {
       new Record(r._data ++ s._data).asInstanceOf[R & S]
 
     def safeCast[S <: Record](implicit rtag: RecordTag[S]): Option[S] = {
-      println(s"checking if $r can be casted to ${rtag.fields}")
+      // println(s"checking if $r can be casted to ${rtag.fields}")
 
       def fieldOk(lbl: String, tag: ClassTag[_] | RecordTag[_] | SequenceTag[_]) = r._data.get(lbl) match {
         case Some(v) => valueOk(v, tag)
