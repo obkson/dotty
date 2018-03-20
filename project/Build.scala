@@ -1158,6 +1158,12 @@ object Build {
 
     def asDottyLibrary(implicit mode: Mode): Project = project.withCommonSettings.
       settings(dottyLibrarySettings).
+      nonBootstrappedSettings(
+        excludeFilter in (unmanagedSources) := {
+          val records = (baseDirectory.value / "src" / "dotty" / "records").getCanonicalPath
+          new SimpleFileFilter(_.getCanonicalPath startsWith records)
+        }
+      ).
       bootstrappedSettings(
         // Needed so that the library sources are visible when `dotty.tools.dotc.core.Definitions#init` is called.
         scalacOptions in Compile ++= Seq("-sourcepath", (scalaSource in Compile).value.getAbsolutePath)

@@ -652,6 +652,14 @@ class Definitions {
 
   lazy val XMLTopScopeModuleRef = ctx.requiredModuleRef("scala.xml.TopScope")
 
+  lazy val FieldTyperType = ctx.requiredClassRef("dotty.records.FieldTyper")
+  def FieldTyperClass(implicit ctx: Context) = FieldTyperType.symbol.asClass
+  def FieldTyperModule(implicit ctx: Context) = FieldTyperClass.companionModule
+
+  lazy val ExtensibleType = ctx.requiredClassRef("dotty.records.Extensible")
+  def ExtensibleClass(implicit ctx: Context) = ExtensibleType.symbol.asClass
+  def ExtensibleModule(implicit ctx: Context) = ExtensibleClass.companionModule
+
   // Annotation base classes
   lazy val AnnotationType              = ctx.requiredClassRef("scala.annotation.Annotation")
   def AnnotationClass(implicit ctx: Context) = AnnotationType.symbol.asClass
