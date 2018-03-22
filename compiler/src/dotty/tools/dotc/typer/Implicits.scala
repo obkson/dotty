@@ -605,7 +605,8 @@ trait Implicits { self: Typer =>
     }
 
     def synthesizedFieldTyper(formal: Type)(implicit ctx: Context): Tree = {
-      //println(i"synth FieldTyper $formal / ${formal.argTypes}%, %")
+      // println(i"synth FieldTyper $formal / ${formal.argTypes}%, %")
+
       formal.argInfos match {
         case (lt :: vt :: Nil) => lt match {
           case ConstantType(Constant(label: String)) =>
@@ -622,7 +623,7 @@ trait Implicits { self: Typer =>
     }
 
     def synthesizedExtensible(formal: Type)(implicit ctx: Context): Tree = {
-      // println(i"synth Extensible $formal / ${formal.argTypes}%, %")
+      // println(i"synth Extensible $formal / ${formal.argInfos}%, %")
 
       // dealias to turn Ext[L, V][R] into Extensible[R, L, V]
       formal.dealias.argInfos match {
@@ -650,31 +651,47 @@ trait Implicits { self: Typer =>
               } else false // Type argument does not conform to upper bound Selectable
             }
 
-            // start new implicit search for Extensible[tp, lt, vt]
-            def canInferImplicit(tp: Type) = {
-              val ev = inferImplicitArg(defn.ExtensibleType.appliedTo(List(tp, lt, vt)), pos)
-              !ev.tpe.isError
-            }
-
-            def isExtensible(tp: Type): Boolean = tp.dealias match {
+            def isAbstract(tp: Type): Boolean = tp match {
               case tr: TypeRef => tr.underlying match {
-                case ci: ClassInfo => concreteExtensible(tr) // Cannot recurse on class info, because we need to check for member on tr, not ci.
-                case underlying => isExtensible(underlying) // recurse on underlying (without starting new implicit search). E.g. TypeBounds and RefinedType is treated here
+                case _: TypeBounds => true
+                case _ => false
               }
-              case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
-              case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
-              case et: ExprType => canInferImplicit(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
-              case at: AndType => canInferImplicit(at.tp1) && canInferImplicit(at.tp2)
-              case ot: OrType => canInferImplicit(ot.tp1) && canInferImplicit(ot.tp2)
-              case tr: TermRef => canInferImplicit(tr.widen)
-              case at: AppliedType => concreteExtensible(at) // e.g. Rec[T] extends Selectable
-              case rt: RefinedType => concreteExtensible(rt)
-              case ct: ConstantType => concreteExtensible(ct)
-              case rt: RecType => false // We currently don't support extending recursive types
-              case na => false // all other cases. Default to not allow extension
+              case _ => false
             }
 
-            if (isExtensible(st)) {
+            def canInferImplicit(tp: Type): Boolean = {
+              // First try to determine if its extensible directly.
+              if (isExtensible(tp)) true
+              else if (isAbstract(tp)) {
+                // As last resort, if we have an abstract type, start new implicit search for Extensible[tp, lt, vt]
+                val ev = inferImplicitArg(defn.ExtensibleType.appliedTo(List(tp, lt, vt)), pos)
+                !ev.tpe.isError
+              } else false
+            }
+
+            def isExtensible(tp: Type): Boolean = {
+              //println(s"isExtensible ${tp}")
+
+              tp match {
+                case tr: TypeRef => tr.underlying match {
+                  case ci: ClassInfo => concreteExtensible(tr) // Cannot recurse on class info, because we need to check for member on tr, not ci.
+                  case underlying => canInferImplicit(underlying) // recurse on underlying
+                }
+                case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
+                case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
+                case et: ExprType => canInferImplicit(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
+                case at: AndType => canInferImplicit(at.tp1) && canInferImplicit(at.tp2)
+                case ot: OrType => canInferImplicit(ot.tp1) && canInferImplicit(ot.tp2)
+                case tr: TermRef => canInferImplicit(tr.widen)
+                case at: AppliedType => concreteExtensible(at) // e.g. Rec[T] extends Selectable
+                case rt: RefinedType => concreteExtensible(rt)
+                case ct: ConstantType => concreteExtensible(ct)
+                case rt: RecType => false // We currently don't support extending recursive types
+                case na => false // All other cases. Default to not allow extension
+              }
+            }
+
+            if (isExtensible(st.dealias)) {
               // Synthesize the Extensible instance
               ref(defn.ExtensibleModule)
                 .select(nme.apply)
