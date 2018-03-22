@@ -6,5 +6,5 @@ import annotation.implicitNotFound
 trait Extensible[+S <: Selectable, L <: String, -V]
 
 object Extensible {
-  def apply[S <: Selectable, L <: String, V] = new Extensible[S, L, V] {}
+  def apply[S <: Selectable, L <: String, V] = new Extensible[S, L, V]{}
 }

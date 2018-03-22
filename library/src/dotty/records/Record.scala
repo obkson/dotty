@@ -20,11 +20,11 @@ object Record {
 
   def unapply(d: Record): Option[Map[String, Any]] = Some(d._data)
 
-  def +[L <: String, V](l: L, v: V)(implicit ft: FieldTyper[l.type, V], ev: Extensible[Record, l.type, V]) = {
+  def +[L <: String, V](l: L, v: V)(implicit ft: FieldTyper[l.type, V], ev: Extensible[Record, l.type, V]): Record & ft.Out = {
     new Record(HashMap((l, v))).asInstanceOf[Record & ft.Out]
   }
 
-  def +[L <: String, V, S <: Selectable](f: Field[L, V, S])(implicit ev: Extensible[Record, L, V]) = {
-    new Record(HashMap((f.label, f.value))).asInstanceOf[Record & S]
+  def +[L <: String, V](f: Field[L, V])(implicit ev: Extensible[Record, L, V]) = {
+    new Record(HashMap((f.label, f.value))).asInstanceOf[Record & f.Out]
   }
 }
