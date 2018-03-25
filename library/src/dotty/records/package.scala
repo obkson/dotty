@@ -12,11 +12,11 @@ package object records {
 
   implicit class RecordOps[R <: Record](r: R) extends AnyVal {
     def +[L <: String, V](l: L, v: V)(implicit ft: FieldTyper[l.type, V], ev: Extensible[R, l.type, V]) = {
-      new Record(r._data + ((l, v))).asInstanceOf[R & ft.Out]
+      new Record(r._data + ((l, v))).asInstanceOf[R & ft.Out & ev.Out]
     }
 
     def +[L <: String, V](f: Field[L, V])(implicit ev: Extensible[R, L, V]) = {
-      new Record(r._data + ((f.label, f.value))).asInstanceOf[R & f.Out]
+      new Record(r._data + ((f.label, f.value))).asInstanceOf[R & f.Out & ev.Out]
     }
   }
 }

@@ -17,6 +17,14 @@ object RecordTest {
 
   def f[R <: Record : Ext["a", Int] : Ext["b", Int]](r : R) = r + ("a"->>1) + ("b", 2)
 
+  def g[R <: Record{val f: Int} : Ext["a", Int] : Ext["b", Int]](r: R) = {
+    val s = r + ("a"->>1) + ("b"->>2)
+    val sf = s.f
+    val sa = s.a
+    val sb = s.b
+    s
+  }
+
   def main(args: Array[String]): Unit = {
     val r = Record()
     val s = f(r)

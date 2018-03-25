@@ -659,6 +659,18 @@ trait Implicits { self: Typer =>
               case _ => false
             }
 
+            def isExtensibleAbstractOut(tp: Type): Boolean = {
+              // println(s"isExtensibleAbstractOut? ${tp}")
+              tp match {
+                case TypeRef(prefix, _) => prefix match {
+                  // evidence$1 --underlying--> Ext[L, V][R] --dealias--> Extensible[R, L, V]
+                  case pt: TypeProxy => pt.underlying.dealias.underlyingClassRef(true).classSymbol eq defn.ExtensibleClass
+                  case _ => false
+                }
+                case _ => false
+              }
+            }
+
             def canInferImplicit(tp: Type): Boolean = {
               // First try to determine if its extensible directly.
               if (isExtensible(tp)) true
@@ -666,16 +678,19 @@ trait Implicits { self: Typer =>
                 // As last resort, if we have an abstract type, start new implicit search for Extensible[tp, lt, vt]
                 val ev = inferImplicitArg(defn.ExtensibleType.appliedTo(List(tp, lt, vt)), pos)
                 !ev.tpe.isError
-              } else false
+              }
+              else false
             }
 
             def isExtensible(tp: Type): Boolean = {
-              //println(s"isExtensible ${tp}")
+              // println(s"isExtensible ${tp}")
 
               tp match {
                 case tr: TypeRef => tr.underlying match {
-                  case ci: ClassInfo => concreteExtensible(tr) // Cannot recurse on class info, because we need to check for member on tr, not ci.
-                  case underlying => canInferImplicit(underlying) // recurse on underlying
+                  // Cannot recurse on class info, because we need to check for member on tr, not ci.
+                  case ci: ClassInfo => concreteExtensible(tr)
+                  // recurse on underlying, or ignore if it turns out to be one of our own Extensible.Out types
+                  case underlying => canInferImplicit(underlying) || isExtensibleAbstractOut(tr)
                 }
                 case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
                 case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
@@ -691,11 +706,48 @@ trait Implicits { self: Typer =>
               }
             }
 
+            def union(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(a){case (acc, (n, tp2)) =>
+              acc.get(n) match {
+                case Some(tp1) => acc + ((n, AndType(tp1, tp2)))
+                case None => acc + ((n, tp2))
+              }
+            }
+            def inter(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(Map[Name, Type]()){ case (acc, (n, tp2)) =>
+              a.get(n) match {
+                case Some(tp1) => acc + ((n, OrType(tp1, tp2)))
+                case None => acc
+              }
+            }
+
+            def knownFields(tp: Type): Map[Name, Type] = {
+              tp match {
+                case tr: TypeRef => tr.underlying match {
+                  case ci: ClassInfo => Map.empty
+                  case underlying => knownFields(underlying) // recurse on underlying
+                }
+                case TypeBounds(_, hi) => knownFields(hi) // recurse on lower bound
+                case tt: ThisType => knownFields(tt.underlying) // recurse on underlying
+                case et: ExprType => knownFields(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
+                case at: AndType => union(knownFields(at.tp1), knownFields(at.tp2)) // union of known fields
+                case ot: OrType => inter(knownFields(ot.tp1), knownFields(ot.tp2)) // intersection of known fields
+                case tr: TermRef => knownFields(tr.widen)
+                case at: AppliedType => Map.empty // e.g. Rec[T] extends Selectable
+                case RefinedType(parent, name, info) => union(knownFields(parent), Map(name->info))
+                case ct: ConstantType => Map.empty
+                case rt: RecType => Map.empty // We currently don't support extending recursive types
+                case na => Map.empty // All other cases. Default to not allow extension
+              }
+            }
+
             if (isExtensible(st.dealias)) {
+              val parent = erasure(st)
+              val fields = union(knownFields(st.dealias), Map(termName(label)->vt)).toList
+              val rt = RefinedType.make(parent, fields.map(_._1), fields.map(_._2))
+
               // Synthesize the Extensible instance
               ref(defn.ExtensibleModule)
                 .select(nme.apply)
-                .appliedToTypes(List(st, lt, vt))
+                .appliedToTypes(List(st, lt, vt, rt))
                 .withPos(pos)
             }
             else EmptyTree
