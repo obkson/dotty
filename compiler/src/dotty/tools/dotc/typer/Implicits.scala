@@ -604,166 +604,212 @@ trait Implicits { self: Typer =>
       }
     }
 
-    def synthesizedFieldTyper(formal: Type)(implicit ctx: Context): Tree = {
-      // println(i"synth FieldTyper $formal / ${formal.argTypes}%, %")
-
-      formal.argInfos match {
-        case (lt :: vt :: Nil) => lt match {
-          case ConstantType(Constant(label: String)) =>
-            val out = RefinedType(defn.SelectableType, termName (label), vt)
-            ref (defn.FieldTyperModule)
-              .select (nme.apply)
-              .appliedToTypes(List(lt, vt, out))
-              .withPos (pos)
-          case _ => EmptyTree
-        }
-        case _ =>
-          EmptyTree
-      }
-    }
-
-    def synthesizedExtensible(formal: Type)(implicit ctx: Context): Tree = {
-      // println(i"synth Extensible $formal / ${formal.argInfos}%, %")
-
-      // dealias to turn Ext[L, V][R] into Extensible[R, L, V]
-      formal.dealias.argInfos match {
-        case st :: lt :: vt :: Nil => lt.dealias match {
-          case ConstantType(Constant(label: String)) => {
-
-            // get Some(type) of field if found on refinement, otherwise None
-            @tailrec def getFieldTypeIfRefinement(tp: Type, name: Name): Option[Type] = tp match {
-              case RefinedType(parent, refinedName, refinedInfo) =>
-                if (refinedName.eq(name)) Some(refinedInfo)
-                else getFieldTypeIfRefinement(parent, name)
-              case _ => None
-            }
-
-            // check if concrete type (TypeRef->ClassInfo or RefinementType) is extensible with "label"->>vt
-            def concreteExtensible(tp: Type) = {
-              if (!tp.isBottomType && tp <:< defn.SelectableType) {
-                val name = termName(label)
-                if (tp.member(name).exists) {
-                  getFieldTypeIfRefinement(tp, name) match {
-                    case Some(existing) => vt <:< existing // member was found on refinement and is a super type: ok!
-                    case None => false // member exists but wasn't found on a refinement, not ok.
-                  }
-                } else true // Doesn't exist. ok to extend
-              } else false // Type argument does not conform to upper bound Selectable
-            }
-
-            def isAbstract(tp: Type): Boolean = tp match {
-              case tr: TypeRef => tr.underlying match {
-                case _: TypeBounds => true
-                case _ => false
-              }
-              case _ => false
-            }
-
-            def isExtensibleAbstractOut(tp: Type): Boolean = {
-              // println(s"isExtensibleAbstractOut? ${tp}")
-              tp match {
-                case TypeRef(prefix, _) => prefix match {
-                  // evidence$1 --underlying--> Ext[L, V][R] --dealias--> Extensible[R, L, V]
-                  case pt: TypeProxy => pt.underlying.dealias.underlyingClassRef(true).classSymbol eq defn.ExtensibleClass
-                  case _ => false
-                }
-                case _ => false
-              }
-            }
-
-            def canInferImplicit(tp: Type): Boolean = {
-              // First try to determine if its extensible directly.
-              if (isExtensible(tp)) true
-              else if (isAbstract(tp)) {
-                // As last resort, if we have an abstract type, start new implicit search for Extensible[tp, lt, vt]
-                val ev = inferImplicitArg(defn.ExtensibleType.appliedTo(List(tp, lt, vt)), pos)
-                !ev.tpe.isError
-              }
-              else false
-            }
-
-            def isExtensible(tp: Type): Boolean = {
-              // println(s"isExtensible ${tp}")
-
-              tp match {
-                case tr: TypeRef => tr.underlying match {
-                  // Cannot recurse on class info, because we need to check for member on tr, not ci.
-                  case ci: ClassInfo => concreteExtensible(tr)
-                  // recurse on underlying, or ignore if it turns out to be one of our own Extensible.Out types
-                  case underlying => canInferImplicit(underlying) || isExtensibleAbstractOut(tr)
-                }
-                case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
-                case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
-                case et: ExprType => canInferImplicit(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
-                case at: AndType => canInferImplicit(at.tp1) && canInferImplicit(at.tp2)
-                case ot: OrType => canInferImplicit(ot.tp1) && canInferImplicit(ot.tp2)
-                case tr: TermRef => canInferImplicit(tr.widen)
-                case at: AppliedType => concreteExtensible(at) // e.g. Rec[T] extends Selectable
-                case rt: RefinedType => concreteExtensible(rt)
-                case ct: ConstantType => concreteExtensible(ct)
-                case rt: RecType => false // We currently don't support extending recursive types
-                case na => false // All other cases. Default to not allow extension
-              }
-            }
-
-            def union(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(a){case (acc, (n, tp2)) =>
-              acc.get(n) match {
-                case Some(tp1) => acc + ((n, AndType(tp1, tp2)))
-                case None => acc + ((n, tp2))
-              }
-            }
-            def inter(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(Map[Name, Type]()){ case (acc, (n, tp2)) =>
-              a.get(n) match {
-                case Some(tp1) => acc + ((n, OrType(tp1, tp2)))
-                case None => acc
-              }
-            }
-
-            def knownFields(tp: Type): Map[Name, Type] = {
-              tp match {
-                case tr: TypeRef => tr.underlying match {
-                  case ci: ClassInfo => Map.empty
-                  case underlying => knownFields(underlying) // recurse on underlying
-                }
-                case TypeBounds(_, hi) => knownFields(hi) // recurse on lower bound
-                case tt: ThisType => knownFields(tt.underlying) // recurse on underlying
-                case et: ExprType => knownFields(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
-                case at: AndType => union(knownFields(at.tp1), knownFields(at.tp2)) // union of known fields
-                case ot: OrType => inter(knownFields(ot.tp1), knownFields(ot.tp2)) // intersection of known fields
-                case tr: TermRef => knownFields(tr.widen)
-                case at: AppliedType => Map.empty // e.g. Rec[T] extends Selectable
-                case RefinedType(parent, name, info) => union(knownFields(parent), Map(name->info))
-                case ct: ConstantType => Map.empty
-                case rt: RecType => Map.empty // We currently don't support extending recursive types
-                case na => Map.empty // All other cases. Default to not allow extension
-              }
-            }
-
-            if (isExtensible(st.dealias)) {
-              val parent = erasure(st)
-              val fields = union(knownFields(st.dealias), Map(termName(label)->vt)).toList
-              val rt = RefinedType.make(parent, fields.map(_._1), fields.map(_._2))
-
-              // Synthesize the Extensible instance
-              ref(defn.ExtensibleModule)
-                .select(nme.apply)
-                .appliedToTypes(List(st, lt, vt, rt))
-                .withPos(pos)
-            }
-            else EmptyTree
-          }
-          case _ => EmptyTree // Label not specific enough
-        }
-        case _ => EmptyTree // wrong number of arguments
-      }
-    }
-
     def hasEq(tp: Type): Boolean =
       inferImplicit(defn.EqType.appliedTo(tp, tp), EmptyTree, pos).isSuccess
 
     def validEqAnyArgs(tp1: Type, tp2: Type)(implicit ctx: Context) = {
       List(tp1, tp2).foreach(fullyDefinedType(_, "eqAny argument", pos))
       assumedCanEqual(tp1, tp2) || !hasEq(tp1) && !hasEq(tp2)
+    }
+
+    // fix wildcard types to upper bound
+    def determine(tp: Type): Type = {
+      tp.dealias match {
+        case WildcardType(optBounds) => determine(optBounds)
+        case TypeBounds(_, hi) => determine(hi)
+        case AppliedType(tycon, args) => AppliedType(tycon, args.map(determine))
+        case _ => tp
+      }
+    }
+
+    @tailrec def stripRefinements(tp: Type): Type = tp match {
+      case RefinedType(parent, _, _) => stripRefinements(parent)
+      case _ => tp
+    }
+
+    def synthesizedFieldTyper(formal: Type)(implicit ctx: Context): Tree = {
+      // println(i"synth FieldTyper $formal / ${formal.argTypes}%, %")
+
+      def synthesize(lt: Type, vt: Type) = lt match {
+        case ConstantType(Constant(label: String)) =>
+          val out = RefinedType(defn.SelectableType, termName(label), vt)
+          val tp = RefinedType.make(defn.FieldTyperType.appliedTo(List(lt, vt)), List(typeName("Out")), List(TypeBounds(out, out)))
+          // Type-check:
+          if (tp <:< formal)
+            Literal(Constant(null)).withType(tp).withPos(pos)
+          else {
+            EmptyTree // derived FieldTyper is not compatible with the required type
+          }
+        case _ => EmptyTree
+      }
+
+      // FieldTyper.Aux => FieldTyper[_, _]{Out}
+      val dealiased = formal.dealias
+      // FieldTyper[_, _]{Out}
+      val stripped = stripRefinements(dealiased)
+      // FieldTyper[TypeVar, TypeVar] => FieldTyper[WildcardType, WildcardType]
+      val approx = wildApprox(stripped, null, Set.empty)
+      approx match {
+        case AppliedType(_, lt :: vt :: Nil) => synthesize(determine(lt), determine(vt))
+        case _ => EmptyTree
+      }
+    }
+
+    def synthesizedExtensible(formal: Type)(implicit ctx: Context): Tree = {
+      // println(i"synth Extensible $formal / ${formal.argInfos}%, %")
+
+      def synthesize(st: Type, lt: Type, vt: Type) = lt match {
+        case ConstantType(Constant(label: String)) => {
+
+          // get Some(type) of field if found on refinement, otherwise None
+          @tailrec def getFieldTypeIfRefinement(tp: Type, name: Name): Option[Type] = tp match {
+            case RefinedType(parent, refinedName, refinedInfo) =>
+              if (refinedName.eq(name)) Some(refinedInfo)
+              else getFieldTypeIfRefinement(parent, name)
+            case _ => None
+          }
+
+          // check if concrete type (TypeRef->ClassInfo or RefinementType) is extensible with "label"->>vt
+          def concreteExtensible(tp: Type) = {
+            if (!tp.isBottomType && tp <:< defn.SelectableType) {
+              val name = termName(label)
+              if (tp.member(name).exists) {
+                getFieldTypeIfRefinement(tp, name) match {
+                  case Some(existing) => vt <:< existing // member was found on refinement and is a super type: ok!
+                  case None => false // member exists but wasn't found on a refinement, not ok.
+                }
+              } else true // Doesn't exist. ok to extend
+            } else false // Type argument does not conform to upper bound Selectable
+          }
+
+          def isAbstract(tp: Type): Boolean = tp match {
+            case tr: TypeRef => tr.underlying match {
+              case _: TypeBounds => true
+              case _ => false
+            }
+            case _ => false
+          }
+
+          def canInferImplicit(tp: Type): Boolean = {
+            // First try to determine if its extensible directly.
+            if (isExtensible(tp)) true
+            else if (isAbstract(tp)) {
+              // As last resort, if we have an abstract type, start new implicit search for Extensible[tp, lt, vt]
+              val ev = inferImplicitArg(defn.ExtensibleType.appliedTo(List(tp, lt, vt)), pos)
+              !ev.tpe.isError
+            }
+            else false
+          }
+
+          def isExtensible(tp: Type): Boolean = {
+            // dealias to avoid mistaking e.g a type alias like
+            // type Merge = [R <: Selectable, S <: Selectable] => R & S
+            // for a concrete Selectable that can be extended with anything
+            tp.dealias match {
+              case tr: TypeRef => tr.underlying match {
+                // Cannot recurse on class info, because we need to check for member on tr, not ci.
+                case ci: ClassInfo => concreteExtensible(tr)
+                // recurse on underlying
+                case underlying => canInferImplicit(underlying)
+              }
+              case WildcardType(optBounds) => canInferImplicit(optBounds) // recurse on the bounds
+              case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
+              case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
+              case et: ExprType => canInferImplicit(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
+              case at: AndType => canInferImplicit(at.tp1) && canInferImplicit(at.tp2)
+              case ot: OrType => canInferImplicit(ot.tp1) && canInferImplicit(ot.tp2)
+              case tr: TermRef => canInferImplicit(tr.widen)
+              case at: AppliedType => concreteExtensible(at) // e.g. Rec[T] extends Selectable
+              case rt: RefinedType => concreteExtensible(rt)
+              case ct: ConstantType => concreteExtensible(ct)
+              case rt: RecType => false // We currently don't support extending recursive types
+              case na => false // All other cases. Default to not allow extension
+            }
+          }
+
+          if (isExtensible(st)) {
+            val tp = defn.ExtensibleType.appliedTo(List(st, lt, vt))
+            // Type-check:
+            if (tp <:< formal)
+              Literal(Constant(null)).withType(tp).withPos(pos)
+            else
+              EmptyTree
+          } else EmptyTree
+        }
+        case _ => EmptyTree // Label not specific enough
+      }
+
+      // Ext[L, V][R] => Extensible[R, L, V]
+      val dealiased = formal.dealias
+      // Extensible[TypeVar, TypeVar, TypeVar] => Extensible[WildcardType, WildcardType, WildcardType]
+      val approx = wildApprox(dealiased, null, Set.empty)
+      approx match {
+        case AppliedType(_, st :: lt :: vt :: Nil) => synthesize(st, determine(lt), determine(vt))
+        case _ => EmptyTree
+      }
+    }
+
+    def synthesizedSimplify(formal: Type)(implicit ctx: Context): Tree = {
+      println(i"synth Simplify $formal / ${formal.argInfos}%, %")
+
+      def union(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(a){case (acc, (n, tp2)) =>
+        acc.get(n) match {
+          case Some(tp1) => acc + ((n, AndType(tp1, tp2)))
+          case None => acc + ((n, tp2))
+        }
+      }
+      def inter(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(Map[Name, Type]()){ case (acc, (n, tp2)) =>
+        a.get(n) match {
+          case Some(tp1) => acc + ((n, OrType(tp1, tp2)))
+          case None => acc
+        }
+      }
+
+      def knownFields(tp: Type): Map[Name, Type] = {
+        tp match {
+          case tr: TypeRef => tr.underlying match {
+            case ci: ClassInfo => Map.empty
+            case underlying => knownFields(underlying) // recurse on underlying
+          }
+          case TypeBounds(_, hi) => knownFields(hi) // recurse on lower bound
+          case tt: ThisType => knownFields(tt.underlying) // recurse on underlying
+          case et: ExprType => knownFields(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
+          case at: AndType => union(knownFields(at.tp1), knownFields(at.tp2)) // union of known fields
+          case ot: OrType => inter(knownFields(ot.tp1), knownFields(ot.tp2)) // intersection of known fields
+          case tr: TermRef => knownFields(tr.widen)
+          case at: AppliedType => Map.empty // e.g. Rec[T] extends Selectable
+          case RefinedType(parent, name, info) => union(knownFields(parent), Map(name->info))
+          case ct: ConstantType => Map.empty
+          case rt: RecType => Map.empty // We currently don't support extending recursive types
+          case na => Map.empty // All other cases. Default to not allow extension
+        }
+      }
+      val base = erasure(formal)
+      val fields = knownFields(formal.dealias).toList
+      val out = RefinedType.make(base, fields.map(_._1), fields.map(_._2))
+
+      def simplify(tp: Type): Type = {
+        tp
+      }
+
+      def synthesize(in: Type, out: Type) = {
+        assert(in <:< out)
+        val tp = defn.SimplifyType.appliedTo(List(in, out))
+        if (tp <:< formal)
+          Literal(Constant(null)).withType(tp).withPos(pos)
+        else
+          EmptyTree
+      }
+
+      // Simplify[S] or Simplify[S]{Out} or Simplify.Aux[S, Out] => Simplify[WildcardType]
+      val approx = wildApprox(stripRefinements(formal.dealias), null, Set.empty)
+
+      approx.argInfos match {
+        case tp :: Nil =>
+          val in = determine(tp)
+          synthesize(in, simplify(in))
+        case _ => EmptyTree
+      }
     }
 
     /** The context to be used when resolving a by-name implicit argument.
@@ -813,6 +859,8 @@ trait Implicits { self: Typer =>
           synthesizedFieldTyper(formalValue).orElse(tree)
         else if (formalValue.isRef(defn.ExtensibleClass))
           synthesizedExtensible(formalValue).orElse(tree)
+        else if (formalValue.isRef(defn.SimplifyClass))
+          synthesizedSimplify(formalValue).orElse(tree)
         else
           tree
     }
@@ -1209,6 +1257,7 @@ trait Implicits { self: Typer =>
       val eligible =
         if (contextual) ctx.implicits.eligible(wildProto)
         else implicitScope(wildProto).eligible
+
       searchImplicits(eligible, contextual).recoverWith {
         failure => failure.reason match {
           case _: AmbiguousImplicits => failure

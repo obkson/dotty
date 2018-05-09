@@ -1,12 +1,15 @@
 package dotty.records
 
-import annotation.implicitNotFound
+// import annotation.implicitNotFound
 
-@implicitNotFound("Cannot derive Selectable from ${L} ->> ${V}")
-sealed trait FieldTyper[L <: String, V] {
+
+// @implicitNotFound("Cannot derive Selectable from ${L} ->> ${V}")
+trait FieldTyper[L <: String, V] {
   type Out <: Selectable
 }
 
 object FieldTyper {
-  def apply[L <: String, V, S <: Selectable] = new FieldTyper[L, V]{ type Out = S }
+  type Aux[L <: String, V, Out0 <: Selectable] = FieldTyper[L, V] {
+    type Out = Out0
+  }
 }
