@@ -257,10 +257,7 @@ object Types {
     }
 
     /** Is this type produced as a repair for an error? */
-    final def isError(implicit ctx: Context): Boolean = stripTypeVar match {
-      case _: ErrorType => true
-      case tp => (tp.typeSymbol is Erroneous) || (tp.termSymbol is Erroneous)
-    }
+    final def isError(implicit ctx: Context): Boolean = stripTypeVar.isInstanceOf[ErrorType]
 
     /** Is some part of this type produced as a repair for an error? */
     final def isErroneous(implicit ctx: Context): Boolean = existsPart(_.isError, forceLazy = false)
@@ -508,10 +505,20 @@ object Types {
             case tp1 => tp1
           })
         case tp: TypeRef =>
-          tp.denot.findMember(name, pre, excluded)
+          tp.denot match {
+            case d: ClassDenotation => d.findMember(name, pre, excluded)
+            case d => go(d.info)
+          }
         case tp: AppliedType =>
-          goApplied(tp)
-        case tp: ThisType =>
+          tp.tycon match {
+            case tc: TypeRef if tc.symbol.isClass =>
+              go(tc)
+            case tc: HKTypeLambda =>
+              goApplied(tp, tc)
+            case _ =>
+              go(tp.superType)
+          }
+        case tp: ThisType => // ??? inline
           goThis(tp)
         case tp: RefinedType =>
           if (name eq tp.refinedName) goRefined(tp) else go(tp.parent)
@@ -598,15 +605,9 @@ object Types {
         }
       }
 
-      def goApplied(tp: AppliedType) = tp.tycon match {
-        case tl: HKTypeLambda =>
-          go(tl.resType).mapInfo(info =>
-            tl.derivedLambdaAbstraction(tl.paramNames, tl.paramInfos, info).appliedTo(tp.args))
-        case tc: TypeRef if tc.symbol.isClass =>
-          go(tc)
-        case _ =>
-          go(tp.superType)
-      }
+      def goApplied(tp: AppliedType, tycon: HKTypeLambda) =
+        go(tycon.resType).mapInfo(info =>
+          tycon.derivedLambdaAbstraction(tycon.paramNames, tycon.paramInfos, info).appliedTo(tp.args))
 
       def goThis(tp: ThisType) = {
         val d = go(tp.underlying)
@@ -623,6 +624,7 @@ object Types {
           // loadClassWithPrivateInnerAndSubSelf in ShowClassTests
           go(tp.cls.typeRef) orElse d
       }
+
       def goParam(tp: TypeParamRef) = {
         val next = tp.underlying
         ctx.typerState.constraint.entry(tp) match {
@@ -632,12 +634,14 @@ object Types {
             go(next)
         }
       }
+
       def goSuper(tp: SuperType) = go(tp.underlying) match {
         case d: JointRefDenotation =>
           typr.println(i"redirecting super.$name from $tp to ${d.symbol.showLocated}")
           new UniqueRefDenotation(d.symbol, tp.memberInfo(d.symbol), d.validFor)
         case d => d
       }
+
       def goAnd(l: Type, r: Type) = {
         go(l) & (go(r), pre, safeIntersection = ctx.pendingMemberSearches.contains(name))
       }
@@ -989,7 +993,7 @@ object Types {
       case tp: TypeRef =>
         if (tp.symbol.isClass) tp
         else tp.info match {
-          case TypeAlias(tp) => tp.dealias1(keepAnnots): @tailrec
+          case TypeAlias(alias) => alias.dealias1(keepAnnots): @tailrec
           case _ => tp
         }
       case app @ AppliedType(tycon, args) =>
@@ -1641,6 +1645,8 @@ object Types {
       }
 
     final def symbol(implicit ctx: Context): Symbol =
+      // We can rely on checkedPeriod (unlike in the definition of `denot` below)
+      // because SymDenotation#installAfter never changes the symbol
       if (checkedPeriod == ctx.period) lastSymbol else computeSymbol
 
     private def computeSymbol(implicit ctx: Context): Symbol =
@@ -1685,17 +1691,11 @@ object Types {
     /** The denotation currently denoted by this type */
     final def denot(implicit ctx: Context): Denotation = {
       val now = ctx.period
-      val lastd = lastDenotation
-      if (checkedPeriod == now) lastd else denotAt(lastd, now)
-    }
-
-    /** A first fall back to do a somewhat more expensive calculation in case the first
-     *  attempt in `denot` does not yield a denotation.
-     */
-    private def denotAt(lastd: Denotation, now: Period)(implicit ctx: Context): Denotation = {
-      if (checkedPeriod != Nowhere && lastd.validFor.contains(now)) {
+      // Even if checkedPeriod == now we still need to recheck lastDenotation.validFor
+      // as it may have been mutated by SymDenotation#installAfter
+      if (checkedPeriod != Nowhere && lastDenotation.validFor.contains(now)) {
         checkedPeriod = now
-        lastd
+        lastDenotation
       }
       else computeDenot
     }
@@ -1967,36 +1967,34 @@ object Types {
     def derivedSelect(prefix: Type)(implicit ctx: Context): Type =
       if (prefix eq this.prefix) this
       else if (prefix.isBottomType) prefix
-      else if (isType) {
-        val res =
-          if (currentSymbol.is(ClassTypeParam)) argForParam(prefix)
-          else prefix.lookupRefined(name)
-        if (res.exists) res
-        else if (Config.splitProjections)
-          prefix match {
-            case prefix: AndType =>
-              def isMissing(tp: Type) = tp match {
-                case tp: TypeRef => !tp.info.exists
-                case _ => false
-              }
-              val derived1 = derivedSelect(prefix.tp1)
-              val derived2 = derivedSelect(prefix.tp2)
-              return (
-                if (isMissing(derived1)) derived2
-                else if (isMissing(derived2)) derived1
-                else prefix.derivedAndType(derived1, derived2))
-            case prefix: OrType =>
-              val derived1 = derivedSelect(prefix.tp1)
-              val derived2 = derivedSelect(prefix.tp2)
-              return prefix.derivedOrType(derived1, derived2)
-            case _ =>
-              withPrefix(prefix)
-          }
+      else {
+        if (isType) {
+          val res =
+            if (currentSymbol.is(ClassTypeParam)) argForParam(prefix)
+            else prefix.lookupRefined(name)
+          if (res.exists) return res
+          if (Config.splitProjections)
+            prefix match {
+              case prefix: AndType =>
+                def isMissing(tp: Type) = tp match {
+                  case tp: TypeRef => !tp.info.exists
+                  case _ => false
+                }
+                val derived1 = derivedSelect(prefix.tp1)
+                val derived2 = derivedSelect(prefix.tp2)
+                return (
+                  if (isMissing(derived1)) derived2
+                  else if (isMissing(derived2)) derived1
+                  else prefix.derivedAndType(derived1, derived2))
+              case prefix: OrType =>
+                val derived1 = derivedSelect(prefix.tp1)
+                val derived2 = derivedSelect(prefix.tp2)
+                return prefix.derivedOrType(derived1, derived2)
+              case _ =>
+            }
+        }
+        if (prefix.isInstanceOf[WildcardType]) WildcardType
         else withPrefix(prefix)
-      }
-      else prefix match {
-        case _: WildcardType => WildcardType
-        case _ => withPrefix(prefix)
       }
 
     /** A reference like this one, but with the given symbol, if it exists */
@@ -2666,6 +2664,12 @@ object Types {
       myParamRefs
     }
 
+    /** Like `paramInfos` but substitute parameter references with the given arguments */
+    final def instantiateParamInfos(argTypes: => List[Type])(implicit ctx: Context): List[Type] =
+      if (isParamDependent) paramInfos.mapConserve(_.substParams(this, argTypes))
+      else paramInfos
+
+    /** Like `resultType` but substitute parameter references with the given arguments */
     final def instantiate(argTypes: => List[Type])(implicit ctx: Context): Type =
       if (isResultDependent) resultType.substParams(this, argTypes)
       else resultType
@@ -2676,7 +2680,7 @@ object Types {
      *  either a list of type parameter symbols or a list of lambda parameters
      */
     def integrate(tparams: List[ParamInfo], tp: Type)(implicit ctx: Context): Type =
-      tparams match {
+      (tparams: @unchecked) match {
         case LambdaParam(lam, _) :: _ => tp.subst(lam, this)
         case params: List[Symbol @unchecked] => tp.subst(params, paramRefs)
       }
@@ -2861,15 +2865,16 @@ object Types {
 
     type This = MethodType
 
+    val paramInfos = paramInfosExp(this)
+    val resType = resultTypeExp(this)
+    assert(resType.exists)
+
     def companion: MethodTypeCompanion
 
     final override def isJavaMethod: Boolean = companion eq JavaMethodType
     final override def isImplicitMethod: Boolean = companion.eq(ImplicitMethodType) || companion.eq(ErasedImplicitMethodType)
     final override def isErasedMethod: Boolean = companion.eq(ErasedMethodType) || companion.eq(ErasedImplicitMethodType)
 
-    val paramInfos = paramInfosExp(this)
-    val resType = resultTypeExp(this)
-    assert(resType.exists)
 
     def computeSignature(implicit ctx: Context): Signature = {
       val params = if (isErasedMethod) Nil else paramInfos
@@ -2998,10 +3003,6 @@ object Types {
 
     lazy val typeParams: List[LambdaParam] =
       paramNames.indices.toList.map(new LambdaParam(this, _))
-
-    /** Instantiate parameter bounds by substituting parameters with given arguments */
-    final def instantiateBounds(argTypes: List[Type])(implicit ctx: Context): List[Type] =
-      paramInfos.mapConserve(_.substParams(this, argTypes))
 
     def derivedLambdaAbstraction(paramNames: List[TypeName], paramInfos: List[TypeBounds], resType: Type)(implicit ctx: Context): Type =
       resType match {
@@ -3480,10 +3481,9 @@ object Types {
     }
 
     def appliedRef(implicit ctx: Context): Type = {
-      def clsDenot = if (prefix eq cls.owner.thisType) cls.denot else cls.denot.copySymDenotation(info = this)
       if (appliedRefCache == null)
         appliedRefCache =
-          TypeRef(prefix, cls.name, clsDenot).appliedTo(cls.typeParams.map(_.typeRef))
+          TypeRef(prefix, cls).appliedTo(cls.typeParams.map(_.typeRef))
       appliedRefCache
     }
 
@@ -3785,8 +3785,8 @@ object Types {
    *     and PolyType not allowed!)
    *   - can be instantiated without arguments or with just () as argument.
    *
-   *  The pattern `SAMType(denot)` matches a SAM type, where `denot` is the
-   *  denotation of the single abstract method as a member of the type.
+   *  The pattern `SAMType(sam)` matches a SAM type, where `sam` is the
+   *  type of the single abstract method.
    */
   object SAMType {
     def zeroParamClass(tp: Type)(implicit ctx: Context): Type = tp match {
@@ -3813,20 +3813,55 @@ object Types {
     }
     def isInstantiatable(tp: Type)(implicit ctx: Context): Boolean = zeroParamClass(tp) match {
       case cinfo: ClassInfo =>
-        val tref = tp.narrow
-        val selfType = cinfo.selfType.asSeenFrom(tref, cinfo.cls)
-        tref <:< selfType
+        val selfType = cinfo.selfType.asSeenFrom(tp, cinfo.cls)
+        tp <:< selfType
       case _ =>
         false
     }
-    def unapply(tp: Type)(implicit ctx: Context): Option[SingleDenotation] =
+    def unapply(tp: Type)(implicit ctx: Context): Option[MethodType] =
       if (isInstantiatable(tp)) {
         val absMems = tp.abstractTermMembers
         // println(s"absMems: ${absMems map (_.show) mkString ", "}")
         if (absMems.size == 1)
           absMems.head.info match {
-            case mt: MethodType if !mt.isParamDependent => Some(absMems.head)
-            case _ => None
+            case mt: MethodType if !mt.isParamDependent =>
+              val cls = tp.classSymbol
+
+              // Given a SAM type such as:
+              //
+              //     import java.util.function.Function
+              //     Function[_ >: String, _ <: Int]
+              //
+              // the single abstract method will have type:
+              //
+              //     (x: Function[_ >: String, _ <: Int]#T): Function[_ >: String, _ <: Int]#R
+              //
+              // which is not implementable outside of the scope of Function.
+              //
+              // To avoid this kind of issue, we approximate references to
+              // parameters of the SAM type by their bounds, this way in the
+              // above example we get:
+              //
+              //    (x: String): Int
+              val approxParams = new ApproximatingTypeMap {
+                def apply(tp: Type): Type = tp match {
+                  case tp: TypeRef if tp.symbol.is(ClassTypeParam) && tp.symbol.owner == cls =>
+                    tp.info match {
+                      case TypeAlias(alias) =>
+                        mapOver(alias)
+                      case TypeBounds(lo, hi) =>
+                        range(atVariance(-variance)(apply(lo)), apply(hi))
+                       case _ =>
+                        range(defn.NothingType, defn.AnyType) // should happen only in error cases
+                    }
+                  case _ =>
+                    mapOver(tp)
+                }
+              }
+              val approx = approxParams(mt).asInstanceOf[MethodType]
+              Some(approx)
+            case _ =>
+              None
           }
         else if (tp isRef defn.PartialFunctionClass)
           // To maintain compatibility with 2.x, we treat PartialFunction specially,
@@ -3835,7 +3870,7 @@ object Types {
           //     def isDefinedAt(x: T) = true
           // and overwrite that method whenever the function body is a sequence of
           // case clauses.
-          absMems.find(_.symbol.name == nme.apply)
+          absMems.find(_.symbol.name == nme.apply).map(_.info.asInstanceOf[MethodType])
         else None
       }
       else None

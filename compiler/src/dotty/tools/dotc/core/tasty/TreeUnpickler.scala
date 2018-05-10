@@ -251,9 +251,9 @@ class TreeUnpickler(reader: TastyReader,
               val space = readType()
               sname match {
                 case SignedName(name, sig) =>
-                  TermRef(prefix, name, space.decl(name).atSignature(sig))
+                  TermRef(prefix, name, space.decl(name).asSeenFrom(prefix).atSignature(sig))
                 case name =>
-                  TermRef(prefix, name, space.decl(name))
+                  TermRef(prefix, name, space.decl(name).asSeenFrom(prefix))
               }
             case TYPEREFin =>
               val name = readName().toTypeName
@@ -261,7 +261,7 @@ class TreeUnpickler(reader: TastyReader,
               val space = readType()
               space.decl(name) match {
                 case symd: SymDenotation if prefix.isArgPrefixOf(symd.symbol) => TypeRef(prefix, symd.symbol)
-                case _ => TypeRef(prefix, name, space.decl(name))
+                case _ => TypeRef(prefix, name, space.decl(name).asSeenFrom(prefix))
               }
             case REFINEDtype =>
               var name: Name = readName()
@@ -287,6 +287,12 @@ class TreeUnpickler(reader: TastyReader,
               readMethodic(PolyType, _.toTypeName)
             case METHODtype =>
               readMethodic(MethodType, _.toTermName)
+            case IMPLICITMETHODtype =>
+              readMethodic(ImplicitMethodType, _.toTermName)
+            case ERASEDMETHODtype =>
+              readMethodic(ErasedMethodType, _.toTermName)
+            case ERASEDIMPLICITMETHODtype =>
+              readMethodic(ErasedImplicitMethodType, _.toTermName)
             case TYPELAMBDAtype =>
               readMethodic(HKTypeLambda, _.toTypeName)
             case PARAMtype =>
@@ -418,7 +424,11 @@ class TreeUnpickler(reader: TastyReader,
         flags = flags | (if (tag == VALDEF) ModuleValCreationFlags else ModuleClassCreationFlags)
       if (ctx.owner.isClass) {
         if (tag == TYPEPARAM) flags |= Param
-        else if (tag == PARAM) flags |= ParamAccessor
+        else if (tag == PARAM) {
+          flags |= ParamAccessor
+          if (!rhsIsEmpty) // param alias
+            flags |= Method
+        }
       }
       else if (isParamTag(tag)) flags |= Param
       flags
@@ -559,6 +569,7 @@ class TreeUnpickler(reader: TastyReader,
           case SEALED => addFlag(Sealed)
           case CASE => addFlag(Case)
           case IMPLICIT => addFlag(Implicit)
+          case ERASED => addFlag(Erased)
           case LAZY => addFlag(Lazy)
           case OVERRIDE => addFlag(Override)
           case INLINE => addFlag(Inline)
@@ -578,6 +589,8 @@ class TreeUnpickler(reader: TastyReader,
           case SCALA2X => addFlag(Scala2x)
           case DEFAULTparameterized => addFlag(DefaultParameterized)
           case STABLE => addFlag(Stable)
+          case PARAMsetter =>
+            addFlag(ParamAccessor)
           case PRIVATEqualified =>
             readByte()
             privateWithin = readType().typeSymbol
@@ -721,11 +734,6 @@ class TreeUnpickler(reader: TastyReader,
               vparamss.nestedMap(_.symbol), name == nme.CONSTRUCTOR)
           val resType = ctx.effectiveResultType(sym, typeParams, tpt.tpe)
           sym.info = ctx.methodType(typeParams, valueParamss, resType)
-          if (sym.isSetter && sym.accessedFieldOrGetter.is(ParamAccessor)) {
-            // reconstitute ParamAccessor flag of setters for var parameters, which is not pickled
-            sym.setFlag(ParamAccessor)
-            sym.resetFlag(Deferred)
-          }
           DefDef(tparams, vparamss, tpt)
         case VALDEF =>
           val tpt = readTpt()(localCtx)
@@ -768,7 +776,6 @@ class TreeUnpickler(reader: TastyReader,
             ValDef(tpt)
           }
           else {
-            sym.setFlag(Method)
             sym.info = ExprType(tpt.tpe)
             pickling.println(i"reading param alias $name -> $currentAddr")
             DefDef(Nil, Nil, tpt)
@@ -1133,19 +1140,18 @@ class TreeUnpickler(reader: TastyReader,
       val idx = readNat()
       val args = until(end)(readTerm())
       val splice = splices(idx)
-
+      val reifiedArgs = args.map(arg => if (arg.isTerm) new TreeExpr(arg) else new TreeType(arg))
       if (isType) {
         val quotedType =
-          if (args.isEmpty) splice.asInstanceOf[quoted.Type[_]]
-          else splice.asInstanceOf[Seq[Any] => quoted.Type[_]](args.map(tree => new TreeType(tree)))
+          if (reifiedArgs.isEmpty) splice.asInstanceOf[quoted.Type[_]]
+          else splice.asInstanceOf[Seq[Any] => quoted.Type[_]](reifiedArgs)
         PickledQuotes.quotedTypeToTree(quotedType)
       } else {
         val quotedExpr =
-          if (args.isEmpty) splice.asInstanceOf[quoted.Expr[_]]
-          else splice.asInstanceOf[Seq[Any] => quoted.Expr[_]](args.map(tree => new TreeExpr(tree)))
+          if (reifiedArgs.isEmpty) splice.asInstanceOf[quoted.Expr[_]]
+          else splice.asInstanceOf[Seq[Any] => quoted.Expr[_]](reifiedArgs)
         PickledQuotes.quotedExprToTree(quotedExpr)
       }
-
     }
 
 // ------ Setting positions ------------------------------------------------

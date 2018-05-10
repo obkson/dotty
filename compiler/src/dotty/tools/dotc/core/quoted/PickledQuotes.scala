@@ -1,7 +1,7 @@
 package dotty.tools.dotc.core.quoted
 
 import dotty.tools.dotc.ast.Trees._
-import dotty.tools.dotc.ast.tpd
+import dotty.tools.dotc.ast.{TreeTypeMap, tpd}
 import dotty.tools.dotc.config.Printers._
 import dotty.tools.dotc.core.Constants.Constant
 import dotty.tools.dotc.core.Contexts._
@@ -10,6 +10,8 @@ import dotty.tools.dotc.core.Flags._
 import dotty.tools.dotc.core.StdNames._
 import dotty.tools.dotc.core.NameKinds
 import dotty.tools.dotc.core.Symbols._
+import dotty.tools.dotc.core.Types.Type
+import dotty.tools.dotc.core.tasty.TreePickler.Hole
 import dotty.tools.dotc.core.tasty.{TastyPickler, TastyPrinter, TastyString}
 
 import scala.quoted.Types._
@@ -24,6 +26,7 @@ object PickledQuotes {
   def pickleQuote(tree: Tree)(implicit ctx: Context): scala.runtime.quoted.Unpickler.Pickled = {
     if (ctx.reporter.hasErrors) Nil
     else {
+      assert(!tree.isInstanceOf[Hole]) // Should not be pickled as it represents `'(~x)` which should be optimized to `x`
       val encapsulated = encapsulateQuote(tree)
       val pickled = pickle(encapsulated)
       TastyString.pickle(pickled)
@@ -31,9 +34,13 @@ object PickledQuotes {
   }
 
   /** Transform the expression into its fully spliced Tree */
-  def quotedExprToTree(expr: quoted.Expr[_])(implicit ctx: Context): Tree = expr match {
+  def quotedExprToTree[T](expr: quoted.Expr[T])(implicit ctx: Context): Tree = expr match {
     case expr: TastyExpr[_] => unpickleExpr(expr)
-    case expr: ValueExpr[_] => Literal(Constant(expr.value))
+    case expr: LiftedExpr[T] =>
+      expr.value match {
+        case value: Class[_] => ref(defn.Predef_classOf).appliedToType(classToType(value))
+        case value=> Literal(Constant(value))
+      }
     case expr: TreeExpr[Tree] @unchecked => expr.tree
     case expr: FunctionAppliedTo[_, _] =>
       functionAppliedTo(quotedExprToTree(expr.f), quotedExprToTree(expr.x))
@@ -121,13 +128,14 @@ object PickledQuotes {
   private def classTagToTypeTree(ct: ClassTag[_])(implicit ctx: Context): TypeTree = {
     val tpe = ct match {
       case ClassTag.Unit => defn.UnitType
+      case ClassTag.Boolean => defn.BooleanType
       case ClassTag.Byte => defn.ByteType
       case ClassTag.Char => defn.CharType
       case ClassTag.Short => defn.ShortType
       case ClassTag.Int => defn.IntType
       case ClassTag.Long => defn.LongType
       case ClassTag.Float => defn.FloatType
-      case ClassTag.Double => defn.FloatType
+      case ClassTag.Double => defn.DoubleType
     }
     TypeTree(tpe)
   }
@@ -137,13 +145,12 @@ object PickledQuotes {
     def x1Ref() = ref(x1.symbol)
     def rec(f: Tree): Tree = f match {
       case closureDef(ddef) =>
-        new TreeMap() {
-          private val paramSym = ddef.vparamss.head.head.symbol
-          override def transform(tree: tpd.Tree)(implicit ctx: Context): tpd.Tree = tree match {
-            case tree: Ident if tree.symbol == paramSym => x1Ref().withPos(tree.pos)
-            case _ => super.transform(tree)
-          }
-        }.transform(ddef.rhs)
+        val paramSym = ddef.vparamss.head.head.symbol
+        new TreeTypeMap(
+          oldOwners = ddef.symbol :: Nil,
+          newOwners = ctx.owner :: Nil,
+          treeMap = tree => if (tree.symbol == paramSym) x1Ref().withPos(tree.pos) else tree
+        ).transform(ddef.rhs)
       case Block(stats, expr) =>
         val applied = rec(expr)
         if (stats.isEmpty) applied
@@ -154,5 +161,28 @@ object PickledQuotes {
         f.select(nme.apply).appliedTo(x1Ref())
     }
     Block(x1 :: Nil, rec(f))
+  }
+
+  private def classToType(clazz: Class[_])(implicit ctx: Context): Type = {
+    if (clazz.isPrimitive) {
+      if (clazz == classOf[Boolean]) defn.BooleanType
+      else if (clazz == classOf[Byte]) defn.ByteType
+      else if (clazz == classOf[Char]) defn.CharType
+      else if (clazz == classOf[Short]) defn.ShortType
+      else if (clazz == classOf[Int]) defn.IntType
+      else if (clazz == classOf[Long]) defn.LongType
+      else if (clazz == classOf[Float]) defn.FloatType
+      else if (clazz == classOf[Double]) defn.DoubleType
+      else defn.UnitType
+    } else if (clazz.isArray) {
+      defn.ArrayType.appliedTo(classToType(clazz.getComponentType))
+    } else if (clazz.isMemberClass) {
+      val name = clazz.getSimpleName.toTypeName
+      val enclosing = classToType(clazz.getEnclosingClass)
+      if (enclosing.member(name).exists) enclosing.select(name)
+      else {
+        enclosing.classSymbol.companionModule.termRef.select(name)
+      }
+    } else ctx.getClassIfDefined(clazz.getCanonicalName).typeRef
   }
 }

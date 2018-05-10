@@ -114,7 +114,7 @@ object Applications {
         productSelectorTypes(unapplyResult)
       else if (isGetMatch(unapplyResult, pos))
         getUnapplySelectors(getTp, args, pos)
-      else if (unapplyResult isRef defn.BooleanClass)
+      else if (unapplyResult.widenSingleton isRef defn.BooleanClass)
         Nil
       else if (defn.isProductSubType(unapplyResult))
         productSelectorTypes(unapplyResult)
@@ -482,7 +482,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
         false
       case argtpe =>
         def SAMargOK = formal match {
-          case SAMType(meth) => argtpe <:< meth.info.toFunctionType()
+          case SAMType(sam) => argtpe <:< sam.toFunctionType()
           case _ => false
         }
         isCompatible(argtpe, formal) || ctx.mode.is(Mode.ImplicitsEnabled) && SAMargOK
@@ -933,7 +933,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
      *   - If a type proxy P is not a reference to a class, P's supertype is in G
      */
     def isSubTypeOfParent(subtp: Type, tp: Type)(implicit ctx: Context): Boolean =
-      if (subtp <:< tp) true
+      if (constrainPatternType(subtp, tp)) true
       else tp match {
         case tp: TypeRef if tp.symbol.isClass => isSubTypeOfParent(subtp, tp.firstParent)
         case tp: TypeProxy => isSubTypeOfParent(subtp, tp.superType)
@@ -1120,7 +1120,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
           val tp1Params = tp1.newLikeThis(tp1.paramNames, tp1.paramInfos, defn.AnyType)
           fullyDefinedType(tp1Params, "type parameters of alternative", alt1.symbol.pos)
 
-          val tparams = ctx.newTypeParams(alt1.symbol, tp1.paramNames, EmptyFlags, tp1.instantiateBounds)
+          val tparams = ctx.newTypeParams(alt1.symbol, tp1.paramNames, EmptyFlags, tp1.instantiateParamInfos(_))
           isAsSpecific(alt1, tp1.instantiate(tparams.map(_.typeRef)), alt2, tp2)
         }
       case _ => // (3)

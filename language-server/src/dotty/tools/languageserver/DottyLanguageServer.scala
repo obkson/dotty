@@ -165,14 +165,9 @@ class DottyLanguageServer extends LanguageServer
     // Do most of the initialization asynchronously so that we can return early
     // from this method and thus let the client know our capabilities.
     CompletableFuture.supplyAsync(() => drivers)
-      .exceptionally {
-        // Can't use a function literal here because of #2367
-        new Function[Throwable, Nothing] {
-          def apply(ex: Throwable) = {
-            ex.printStackTrace
-            sys.exit(1)
-          }
-        }
+      .exceptionally { (ex: Throwable) =>
+        ex.printStackTrace
+        sys.exit(1)
       }
 
     new InitializeResult(c)
@@ -308,8 +303,9 @@ class DottyLanguageServer extends LanguageServer
       val newName = params.getNewName
 
       val refs = Interactive.namedTrees(trees, includeReferences = true, tree =>
-        (Interactive.matchSymbol(tree, sym, Include.overriding)
-          || (linkedSym != NoSymbol && Interactive.matchSymbol(tree, linkedSym, Include.overriding))))
+        tree.pos.isSourceDerived
+          && (Interactive.matchSymbol(tree, sym, Include.overriding)
+            || (linkedSym != NoSymbol && Interactive.matchSymbol(tree, linkedSym, Include.overriding))))
 
       val changes = refs.groupBy(ref => toUri(ref.source).toString).mapValues(_.map(ref => new TextEdit(range(ref.namePos), newName)).asJava)
 

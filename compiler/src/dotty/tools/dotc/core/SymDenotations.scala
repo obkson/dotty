@@ -12,6 +12,7 @@ import collection.BitSet
 import dotty.tools.io.AbstractFile
 import Decorators.SymbolIteratorDecorator
 import ast._
+import ast.Trees._
 import annotation.tailrec
 import CheckRealizable._
 import util.SimpleIdentityMap
@@ -667,7 +668,7 @@ object SymDenotations {
 
     /** Is this symbol a class references to which that are supertypes of null? */
     final def isNullableClass(implicit ctx: Context): Boolean =
-      isClass && !isValueClass && !(this is ModuleClass) && symbol != defn.NothingClass
+      isClass && !isValueClass && !is(ModuleClass) && symbol != defn.NothingClass
 
     /** Is this definition accessible as a member of tree with type `pre`?
      *  @param pre          The type of the tree from which the selection is made
@@ -929,16 +930,17 @@ object SymDenotations {
      *  except for a toplevel module, where its module class is returned.
      */
     final def topLevelClass(implicit ctx: Context): Symbol = {
-
-      def topLevel(d: SymDenotation): Symbol =
-        if (!exists || d.isEffectiveRoot || (d is PackageClass) || (d.owner is PackageClass))
-          d.symbol
-        else
-          topLevel(d.owner)
+      @tailrec def topLevel(d: SymDenotation): Symbol = {
+        if (d.isTopLevelClass) d.symbol
+        else topLevel(d.owner)
+      }
 
       val sym = topLevel(this)
       if (sym.isClass) sym else sym.moduleClass
     }
+
+    final def isTopLevelClass(implicit ctx: Context): Boolean =
+      !this.exists || this.isEffectiveRoot || (this is PackageClass) || (this.owner is PackageClass)
 
     /** The package class containing this denotation */
     final def enclosingPackageClass(implicit ctx: Context): Symbol =
@@ -988,7 +990,7 @@ object SymDenotations {
      */
     private def companionNamed(name: TypeName)(implicit ctx: Context): Symbol =
       if (owner.isClass)
-        owner.info.decl(name).suchThat(_.isCoDefinedWith(symbol)).symbol
+        owner.unforcedDecls.lookup(name).suchThat(_.isCoDefinedWith(symbol)).symbol
       else if (!owner.exists || ctx.compilationUnit == null)
         NoSymbol
       else if (!ctx.compilationUnit.tpdTree.isEmpty)
@@ -1466,7 +1468,7 @@ object SymDenotations {
       val builder = new BaseDataBuilder
       for (p <- classParents) {
         if (p.typeSymbol.isClass) builder.addAll(p.typeSymbol.asClass.baseClasses)
-        else assert(ctx.mode.is(Mode.Interactive), s"$this has non-class parent: $p")
+        else assert(isRefinementClass || ctx.mode.is(Mode.Interactive), s"$this has non-class parent: $p")
       }
       (classSymbol :: builder.baseClasses, builder.baseClassSet)
     }
@@ -1476,8 +1478,6 @@ object SymDenotations {
       base.isClass &&
       (  (symbol eq base)
       || (baseClassSet contains base)
-      || (this is Erroneous)
-      || (base is Erroneous)
       )
 
     final override def isSubClass(base: Symbol)(implicit ctx: Context) =
@@ -1678,7 +1678,7 @@ object SymDenotations {
           case tp @ AppliedType(tycon, args) =>
             val subsym = tycon.typeSymbol
             if (subsym eq symbol) tp
-            else tycon.typeParams match {
+            else (tycon.typeParams: @unchecked) match {
               case LambdaParam(_, _) :: _ =>
                 baseTypeOf(tp.superType)
               case tparams: List[Symbol @unchecked] =>

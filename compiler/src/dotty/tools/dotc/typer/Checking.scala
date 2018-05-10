@@ -13,6 +13,7 @@ import StdNames._
 import NameOps._
 import Symbols._
 import Trees._
+import TreeInfo._
 import ProtoTypes._
 import Constants._
 import Scopes._
@@ -45,7 +46,7 @@ object Checking {
    */
   def checkBounds(args: List[tpd.Tree], boundss: List[TypeBounds], instantiate: (Type, List[Type]) => Type)(implicit ctx: Context): Unit = {
     (args, boundss).zipped.foreach { (arg, bound) =>
-      if (!bound.isHK && arg.tpe.isHK)
+      if (!bound.isLambdaSub && arg.tpe.isLambdaSub)
         // see MissingTypeParameterFor
         ctx.error(ex"missing type parameter(s) for $arg", arg.pos)
     }
@@ -338,9 +339,10 @@ object Checking {
     def checkWithDeferred(flag: FlagSet) =
       if (sym.is(flag))
         fail(AbstractMemberMayNotHaveModifier(sym, flag))
-    def checkNoConflict(flag1: FlagSet, flag2: FlagSet) =
-      if (sym.is(allOf(flag1, flag2)))
-        fail(i"illegal combination of modifiers: `$flag1` and `$flag2` for: $sym")
+    def checkNoConflict(flag1: FlagSet, flag2: FlagSet, msg: => String) =
+      if (sym.is(allOf(flag1, flag2))) fail(msg)
+    def checkCombination(flag1: FlagSet, flag2: FlagSet) =
+      checkNoConflict(flag1, flag2, i"illegal combination of modifiers: `$flag1` and `$flag2` for: $sym")
     def checkApplicable(flag: FlagSet, ok: Boolean) =
       if (!ok && !sym.is(Synthetic))
         fail(i"modifier `$flag` is not allowed for this definition")
@@ -373,10 +375,11 @@ object Checking {
     }
     if (sym.isValueClass && sym.is(Trait) && !sym.isRefinementClass)
       fail(CannotExtendAnyVal(sym))
-    checkNoConflict(Final, Sealed)
-    checkNoConflict(Private, Protected)
-    checkNoConflict(Abstract, Override)
-    checkNoConflict(Lazy, Inline)
+    checkCombination(Final, Sealed)
+    checkCombination(Private, Protected)
+    checkCombination(Abstract, Override)
+    checkCombination(Lazy, Inline)
+    checkNoConflict(Lazy, ParamAccessor, s"parameter may not be `lazy`")
     if (sym.is(Inline)) checkApplicable(Inline, sym.isTerm && !sym.is(Mutable | Module))
     if (sym.is(Lazy)) checkApplicable(Lazy, !sym.is(Method | Mutable))
     if (sym.isType && !sym.is(Deferred))
@@ -599,36 +602,35 @@ trait Checking {
     }
   }
 
-  /** Check that `tree` is a pure expression of constant type */
-  def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context): Unit =
+  /** Check that `tree` can be marked `inline` */
+  def checkInlineConformant(tree: Tree, isFinal: Boolean, what: => String)(implicit ctx: Context): Unit = {
+    // final vals can be marked inline even if they're not pure, see Typer#patchFinalVals
+    val purityLevel = if (isFinal) Idempotent else Pure
     tree.tpe match {
       case tp: TermRef if tp.symbol.is(InlineParam) => // ok
       case tp => tp.widenTermRefExpr match {
-        case tp: ConstantType if isPureExpr(tree) => // ok
-        case tp if defn.isFunctionType(tp) && isPureExpr(tree) => // ok
+        case tp: ConstantType if exprPurity(tree) >= purityLevel => // ok
+        case tp if defn.isFunctionType(tp) && exprPurity(tree) >= purityLevel => // ok
         case _ =>
           if (!ctx.erasedTypes) ctx.error(em"$what must be a constant expression or a function", tree.pos)
       }
     }
+  }
 
-  /** Check that class does not define same symbol twice */
-  def checkNoDoubleDefs(cls: Symbol)(implicit ctx: Context): Unit = {
+  /** Check that class does not declare same symbol twice */
+  def checkNoDoubleDeclaration(cls: Symbol)(implicit ctx: Context): Unit = {
     val seen = new mutable.HashMap[Name, List[Symbol]] {
       override def default(key: Name) = Nil
     }
-    typr.println(i"check no double defs $cls")
+    typr.println(i"check no double declarations $cls")
 
     def checkDecl(decl: Symbol): Unit = {
       for (other <- seen(decl.name)) {
         typr.println(i"conflict? $decl $other")
         if (decl.matches(other)) {
-          def doubleDefError(decl: Symbol, other: Symbol): Unit = {
-            def ofType = if (decl.isType) "" else em": ${other.info}"
-            def explanation =
-              if (!decl.isRealMethod) ""
-              else "\n(the definitions have matching type signatures)"
-            ctx.error(em"$decl is already defined as $other$ofType$explanation", decl.pos)
-          }
+          def doubleDefError(decl: Symbol, other: Symbol): Unit =
+            if (!decl.info.isErroneous && !other.info.isErroneous)
+              ctx.error(DoubleDeclaration(decl, other), decl.pos)
           if (decl is Synthetic) doubleDefError(other, decl)
           else doubleDefError(decl, other)
         }
@@ -659,7 +661,7 @@ trait Checking {
 
   /** Check that `tpt` does not define a higher-kinded type */
   def checkSimpleKinded(tpt: Tree)(implicit ctx: Context): Tree =
-    if (tpt.tpe.isHK && !ctx.compilationUnit.isJava) {
+    if (tpt.tpe.isLambdaSub && !ctx.compilationUnit.isJava) {
         // be more lenient with missing type params in Java,
         // needed to make pos/java-interop/t1196 work.
       errorTree(tpt, MissingTypeParameterFor(tpt.tpe))
@@ -869,8 +871,8 @@ trait NoChecking extends ReChecking {
   override def checkClassType(tp: Type, pos: Position, traitReq: Boolean, stablePrefixReq: Boolean)(implicit ctx: Context): Type = tp
   override def checkImplicitParamsNotSingletons(vparamss: List[List[ValDef]])(implicit ctx: Context): Unit = ()
   override def checkFeasibleParent(tp: Type, pos: Position, where: => String = "")(implicit ctx: Context): Type = tp
-  override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
-  override def checkNoDoubleDefs(cls: Symbol)(implicit ctx: Context): Unit = ()
+  override def checkInlineConformant(tree: Tree, isFinal: Boolean, what: => String)(implicit ctx: Context) = ()
+  override def checkNoDoubleDeclaration(cls: Symbol)(implicit ctx: Context): Unit = ()
   override def checkParentCall(call: Tree, caller: ClassSymbol)(implicit ctx: Context) = ()
   override def checkSimpleKinded(tpt: Tree)(implicit ctx: Context): Tree = tpt
   override def checkNotSingleton(tpt: Tree, where: String)(implicit ctx: Context): Tree = tpt
