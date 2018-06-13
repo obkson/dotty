@@ -1,0 +1,5 @@
+Record(name=Morty, age=14)
+Morty
+14
+Record(name=Morty, age=14, ssn=AAA-GG-SSSS)
+AAA-GG-SSSS

@@ -670,8 +670,8 @@ class Definitions {
   def FieldTyperClass(implicit ctx: Context) = FieldTyperType.symbol.asClass
   lazy val ExtensibleType = ctx.requiredClassRef("dotty.records.Extensible")
   def ExtensibleClass(implicit ctx: Context) = ExtensibleType.symbol.asClass
-  lazy val SimplifyType = ctx.requiredClassRef("dotty.records.Simplify")
-  def SimplifyClass(implicit ctx: Context) = SimplifyType.symbol.asClass
+  lazy val RecordType = ctx.requiredClassRef("dotty.records.Record")
+  def RecordClass(implicit ctx: Context) = RecordType.symbol.asClass
 
   // Annotation base classes
   lazy val AnnotationType              = ctx.requiredClassRef("scala.annotation.Annotation")

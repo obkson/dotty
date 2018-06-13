@@ -13,6 +13,7 @@ import TypeErasure.{erasedLub, erasedGlb}
 import TypeApplications._
 import scala.util.control.NonFatal
 import reporting.trace
+import annotation.tailrec
 
 /** Provides methods to compare types.
  */
@@ -1512,17 +1513,44 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         case _ =>
           NoType
       }
-    // opportunistically merge same-named refinements
+    // Brute-force search for same-named refinements to merge
     // this does not change anything semantically (i.e. merging or not merging
     // gives =:= types), but it keeps the type smaller.
-    case tp1: RefinedType =>
-      tp2 match {
-        case tp2: RefinedType if tp1.refinedName == tp2.refinedName =>
-          tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
-            tp1.refinedInfo & tp2.refinedInfo)
-        case _ =>
-          NoType
+    case tp1: RefinedType => tp2 match {
+      case tp2: RefinedType => {
+        @tailrec def merge(pt1: RefinedType, ns1: List[Name], is1: List[Type]): Type = {
+          @tailrec def search(pt2: RefinedType, ns2: List[Name], is2: List[Type]): Type = {
+            if (pt1.refinedName == pt2.refinedName) {
+              // Drop the matching refinement...
+              // (no need to make a derivedRefinement here, since the residuals are guaranteed to be different)
+              val residual1 = RefinedType.make(pt1.parent, ns1, is1)
+              val residual2 = RefinedType.make(pt2.parent, ns2, is2)
+              // ...and intersect recursively, adding result to intersection of residuals
+              tp1.derivedRefinedType(residual1 & residual2, pt1.refinedName,
+                pt1.refinedInfo & pt2.refinedInfo)
+            }
+            else if (pt1.parent eq pt2.parent)
+              // transfer all refinements to one of the parents
+              RefinedType.make(RefinedType.make(pt1, ns1, is1),
+                pt2.refinedName :: ns2, pt2.refinedInfo :: is2)
+            else pt2.parent match {
+              // Search deeper for a match
+              case rt: RefinedType => search(rt, pt2.refinedName :: ns2, pt2.refinedInfo :: is2)
+              case _ => NoType
+            }
+          }
+          val merged = search(tp2, Nil, Nil)
+          if (merged.exists) merged
+          else pt1.parent match {
+            // go to next refinement and search for a match
+            case rt: RefinedType => merge(rt, pt1.refinedName :: ns1, pt1.refinedInfo :: is1)
+            case _ => NoType
+          }
+        }
+        merge(tp1, Nil, Nil)
       }
+      case _ => NoType
+    }
     case tp1: RecType =>
       tp1.rebind(distributeAnd(tp1.parent, tp2))
     case ExprType(rt1) =>

@@ -618,12 +618,42 @@ trait Implicits { self: Typer =>
     }
 
     // fix wildcard types to upper bound
-    def determine(tp: Type): Type = {
+    def determineHi(tp: Type): Type = {
       tp.dealias match {
-        case WildcardType(optBounds) => determine(optBounds)
-        case TypeBounds(_, hi) => determine(hi)
-        case AppliedType(tycon, args) => AppliedType(tycon, args.map(determine))
-        case _ => tp
+        case tr: TypeRef => tr.underlying match {
+          case ci: ClassInfo => tr // do NOT recurse on ClassInfo
+          case underlying => determineHi(underlying)
+        }
+        case WildcardType(optBounds) => determineHi(optBounds)
+        case TypeBounds(_, hi) => determineHi(hi)
+        case AndType(tp1, tp2) => AndType(determineHi(tp1), determineHi(tp2))
+        case OrType(tp1, tp2) => OrType(determineHi(tp1), determineHi(tp2))
+        case AppliedType(tycon, args) => AppliedType(tycon, args.map(determineHi))
+        case _ => {
+          println("determineHi match failure")
+          println(tp.dealias)
+          tp
+        }
+      }
+    }
+
+    // fix wildcard types to lower bound
+    def determineLo(tp: Type): Type = {
+      tp.dealias match {
+        case tr: TypeRef => tr.underlying match {
+          case ci: ClassInfo => tr // do NOT recurse on ClassInfo
+          case underlying => determineLo(underlying)
+        }
+        case WildcardType(optBounds) => determineLo(optBounds)
+        case TypeBounds(lo, _) => determineLo(lo)
+        case AndType(tp1, tp2) => AndType(determineLo(tp1), determineLo(tp2))
+        case OrType(tp1, tp2) => OrType(determineLo(tp1), determineLo(tp2))
+        case AppliedType(tycon, args) => AppliedType(tycon, args.map(determineLo))
+        case _ => {
+          println("determineLo match failure")
+          println(tp.dealias)
+          tp
+        }
       }
     }
 
@@ -637,12 +667,30 @@ trait Implicits { self: Typer =>
 
       def synthesize(lt: Type, vt: Type) = lt match {
         case ConstantType(Constant(label: String)) =>
-          val out = RefinedType(defn.SelectableType, termName(label), vt)
+          println(vt)
+          val out = RefinedType(defn.RecordType, termName(label), vt)
           val tp = RefinedType.make(defn.FieldTyperType.appliedTo(List(lt, vt)), List(typeName("Out")), List(TypeBounds(out, out)))
           // Type-check:
           if (tp <:< formal)
             Literal(Constant(null)).withType(tp).withPos(pos)
           else {
+            println("--------------------")
+            println(s"Tried to create field typer => ${out.show}")
+            print(s"But requested type was ")
+            formal match {
+              case AppliedType(_, _ :: _ :: out0 :: Nil) => {
+                println(out0.show)
+                println("-")
+                println(out0.dealias)
+                println("-")
+                println(out0.stripTypeVar)
+                println("-")
+                println(out0.underlyingIfProxy)
+                println("-")
+                println(wildApprox(out0, null, Set.empty))
+              }
+              case _ => println("unknown")
+            }
             EmptyTree // derived FieldTyper is not compatible with the required type
           }
         case _ => EmptyTree
@@ -655,13 +703,13 @@ trait Implicits { self: Typer =>
       // FieldTyper[TypeVar, TypeVar] => FieldTyper[WildcardType, WildcardType]
       val approx = wildApprox(stripped, null, Set.empty)
       approx match {
-        case AppliedType(_, lt :: vt :: Nil) => synthesize(determine(lt), determine(vt))
+        case AppliedType(_, lt :: vt :: Nil) => synthesize(determineHi(lt), determineHi(vt))
         case _ => EmptyTree
       }
     }
 
     def synthesizedExtensible(formal: Type)(implicit ctx: Context): Tree = {
-      // println(i"synth Extensible $formal / ${formal.argInfos}%, %")
+      println(i"synth Extensible $formal / ${formal.argInfos}%, %")
 
       def synthesize(st: Type, lt: Type, vt: Type) = lt match {
         case ConstantType(Constant(label: String)) => {
@@ -676,7 +724,7 @@ trait Implicits { self: Typer =>
 
           // check if concrete type (TypeRef->ClassInfo or RefinementType) is extensible with "label"->>vt
           def concreteExtensible(tp: Type) = {
-            if (!tp.isBottomType && tp <:< defn.SelectableType) {
+            if (!tp.isBottomType && tp <:< defn.RecordType) {
               val name = termName(label)
               if (tp.member(name).exists) {
                 getFieldTypeIfRefinement(tp, name) match {
@@ -707,6 +755,10 @@ trait Implicits { self: Typer =>
           }
 
           def isExtensible(tp: Type): Boolean = {
+            println()
+            println("===== is Extensible? ====")
+            println(tp)
+            println(tp.show)
             // dealias to avoid mistaking e.g a type alias like
             // type Merge = [R <: Selectable, S <: Selectable] => R & S
             // for a concrete Selectable that can be extended with anything
@@ -714,15 +766,15 @@ trait Implicits { self: Typer =>
               case tr: TypeRef => tr.underlying match {
                 // Cannot recurse on class info, because we need to check for member on tr, not ci.
                 case ci: ClassInfo => concreteExtensible(tr)
-                // recurse on underlying
+                // recurse on underlying, or ignore if it turns out to be one of our own Extensible.Out types
                 case underlying => canInferImplicit(underlying)
               }
               case WildcardType(optBounds) => canInferImplicit(optBounds) // recurse on the bounds
               case TypeBounds(lo, _) => canInferImplicit(lo) // recurse on lower bound
               case tt: ThisType => canInferImplicit(tt.underlying) // recurse on underlying
               case et: ExprType => canInferImplicit(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
-              case at: AndType => canInferImplicit(at.tp1) && canInferImplicit(at.tp2)
-              case ot: OrType => canInferImplicit(ot.tp1) && canInferImplicit(ot.tp2)
+              case AndType(tp1, tp2) => canInferImplicit(tp1) && canInferImplicit(tp2)
+              case OrType(tp1, tp2) => canInferImplicit(tp1) && canInferImplicit(tp2)
               case tr: TermRef => canInferImplicit(tr.widen)
               case at: AppliedType => concreteExtensible(at) // e.g. Rec[T] extends Selectable
               case rt: RefinedType => concreteExtensible(rt)
@@ -746,20 +798,34 @@ trait Implicits { self: Typer =>
 
       // Ext[L, V][R] => Extensible[R, L, V]
       val dealiased = formal.dealias
-      // Extensible[TypeVar, TypeVar, TypeVar] => Extensible[WildcardType, WildcardType, WildcardType]
-      val approx = wildApprox(dealiased, null, Set.empty)
-      approx match {
-        case AppliedType(_, st :: lt :: vt :: Nil) => synthesize(st, determine(lt), determine(vt))
-        case _ => EmptyTree
+      val ret = dealiased match {
+        case AppliedType(_, st :: lt :: vt :: Nil) => synthesize(st.dealias, lt.dealias, vt.dealias)
+        case _ => {
+          EmptyTree
+        }
+      }
+      if (ret.isEmpty) {
+        // Extensible[TypeVar, TypeVar, TypeVar] => Extensible[WildcardType, WildcardType, WildcardType]
+        val approx = wildApprox(dealiased, null, Set.empty)
+        println()
+        println("Could not synthesize, try with approximated type")
+        println(approx)
+        println(approx.show)
+        approx match {
+          case AppliedType(_, st :: lt :: vt :: Nil) => synthesize(determineLo(st), determineHi(lt), determineHi(vt))
+          case _ => EmptyTree
+        }
+      } else {
+        ret
       }
     }
 
-    def synthesizedSimplify(formal: Type)(implicit ctx: Context): Tree = {
-      println(i"synth Simplify $formal / ${formal.argInfos}%, %")
+    /*
+    def extOut(st: Type, label: TermName, vt: Type)(implicit ctx: Context): Type = {
 
       def union(a: Map[Name, Type], b: Map[Name, Type]): Map[Name, Type] = b.foldLeft(a){case (acc, (n, tp2)) =>
         acc.get(n) match {
-          case Some(tp1) => acc + ((n, AndType(tp1, tp2)))
+          case Some(tp1) => acc + ((n, AndType.make(tp1, tp2)))
           case None => acc + ((n, tp2))
         }
       }
@@ -776,10 +842,10 @@ trait Implicits { self: Typer =>
             case ci: ClassInfo => Map.empty
             case underlying => knownFields(underlying) // recurse on underlying
           }
-          case TypeBounds(_, hi) => knownFields(hi) // recurse on lower bound
+          case TypeBounds(_, hi) => knownFields(hi) // recurse on hi bound
           case tt: ThisType => knownFields(tt.underlying) // recurse on underlying
           case et: ExprType => knownFields(et.underlying) // Not allowed to pass ExprTypes as type args anyway, but we might as well be nice and check the resType
-          case at: AndType => union(knownFields(at.tp1), knownFields(at.tp2)) // union of known fields
+          case AndType(tp1, tp2) => union(knownFields(tp1), knownFields(tp2)) // union of known fields
           case ot: OrType => inter(knownFields(ot.tp1), knownFields(ot.tp2)) // intersection of known fields
           case tr: TermRef => knownFields(tr.widen)
           case at: AppliedType => Map.empty // e.g. Rec[T] extends Selectable
@@ -789,33 +855,11 @@ trait Implicits { self: Typer =>
           case na => Map.empty // All other cases. Default to not allow extension
         }
       }
-      val base = erasure(formal)
-      val fields = knownFields(formal.dealias).toList
-      val out = RefinedType.make(base, fields.map(_._1), fields.map(_._2))
-
-      def simplify(tp: Type): Type = {
-        tp
-      }
-
-      def synthesize(in: Type, out: Type) = {
-        assert(in <:< out)
-        val tp = defn.SimplifyType.appliedTo(List(in, out))
-        if (tp <:< formal)
-          Literal(Constant(null)).withType(tp).withPos(pos)
-        else
-          EmptyTree
-      }
-
-      // Simplify[S] or Simplify[S]{Out} or Simplify.Aux[S, Out] => Simplify[WildcardType]
-      val approx = wildApprox(stripRefinements(formal.dealias), null, Set.empty)
-
-      approx.argInfos match {
-        case tp :: Nil =>
-          val in = determine(tp)
-          synthesize(in, simplify(in))
-        case _ => EmptyTree
-      }
+      val base = erasure(st)
+      val fields = union(knownFields(st.dealias), Map(label->vt)).toList
+      return RefinedType.make(base, fields.map(_._1), fields.map(_._2))
     }
+    */
 
     /** The context to be used when resolving a by-name implicit argument.
      *  This makes any implicit stored under `DelayedImplicit` visible and
@@ -864,8 +908,6 @@ trait Implicits { self: Typer =>
           synthesizedFieldTyper(formalValue).orElse(tree)
         else if (formalValue.isRef(defn.ExtensibleClass))
           synthesizedExtensible(formalValue).orElse(tree)
-        else if (formalValue.isRef(defn.SimplifyClass))
-          synthesizedSimplify(formalValue).orElse(tree)
         else
           tree
     }
