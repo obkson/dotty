@@ -1,6 +1,6 @@
 import dotty.records._
 
-object RecordRunTest2 {
+object Test {
 
   def addOne[R <: Record : Ext["a", Int]](r: R) = r + ("a"->>1)
 
