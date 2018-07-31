@@ -1,6 +1,6 @@
-import dotty.records.Extensible
+import dotty.records.{Extensible, Record}
 
-class Rec extends Selectable {
+class Rec extends Record {
   override def selectDynamic(name: String) = 42
   val myValDef = 1
   private val myPrivValDef = 2

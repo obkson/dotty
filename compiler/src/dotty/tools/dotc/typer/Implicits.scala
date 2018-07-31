@@ -630,8 +630,8 @@ trait Implicits { self: Typer =>
         case OrType(tp1, tp2) => OrType(determineHi(tp1), determineHi(tp2))
         case AppliedType(tycon, args) => AppliedType(tycon, args.map(determineHi))
         case _ => {
-          println("determineHi match failure")
-          println(tp.dealias)
+          // println("determineHi match failure")
+          // println(tp.dealias)
           tp
         }
       }
@@ -650,8 +650,8 @@ trait Implicits { self: Typer =>
         case OrType(tp1, tp2) => OrType(determineLo(tp1), determineLo(tp2))
         case AppliedType(tycon, args) => AppliedType(tycon, args.map(determineLo))
         case _ => {
-          println("determineLo match failure")
-          println(tp.dealias)
+          // println("determineLo match failure")
+          // println(tp.dealias)
           tp
         }
       }
@@ -667,18 +667,19 @@ trait Implicits { self: Typer =>
 
       def synthesize(lt: Type, vt: Type) = lt match {
         case ConstantType(Constant(label: String)) =>
-          println(vt)
+          // println(vt)
           val out = RefinedType(defn.RecordType, termName(label), vt)
           val tp = RefinedType.make(defn.FieldTyperType.appliedTo(List(lt, vt)), List(typeName("Out")), List(TypeBounds(out, out)))
           // Type-check:
           if (tp <:< formal)
             Literal(Constant(null)).withType(tp).withPos(pos)
           else {
-            println("--------------------")
-            println(s"Tried to create field typer => ${out.show}")
-            print(s"But requested type was ")
+            // println("--------------------")
+            // println(s"Tried to create field typer => ${out.show}")
+            // print(s"But requested type was ")
             formal match {
               case AppliedType(_, _ :: _ :: out0 :: Nil) => {
+                /*
                 println(out0.show)
                 println("-")
                 println(out0.dealias)
@@ -688,8 +689,9 @@ trait Implicits { self: Typer =>
                 println(out0.underlyingIfProxy)
                 println("-")
                 println(wildApprox(out0, null, Set.empty))
+                */
               }
-              case _ => println("unknown")
+              case _ => {/*println("unknown")*/}
             }
             EmptyTree // derived FieldTyper is not compatible with the required type
           }
@@ -709,7 +711,7 @@ trait Implicits { self: Typer =>
     }
 
     def synthesizedExtensible(formal: Type)(implicit ctx: Context): Tree = {
-      println(i"synth Extensible $formal / ${formal.argInfos}%, %")
+      // println(i"synth Extensible $formal / ${formal.argInfos}%, %")
 
       def synthesize(st: Type, lt: Type, vt: Type) = lt match {
         case ConstantType(Constant(label: String)) => {
@@ -755,10 +757,10 @@ trait Implicits { self: Typer =>
           }
 
           def isExtensible(tp: Type): Boolean = {
-            println()
-            println("===== is Extensible? ====")
-            println(tp)
-            println(tp.show)
+            //println()
+            //println("===== is Extensible? ====")
+            //println(tp)
+            //println(tp.show)
             // dealias to avoid mistaking e.g a type alias like
             // type Merge = [R <: Selectable, S <: Selectable] => R & S
             // for a concrete Selectable that can be extended with anything
@@ -807,10 +809,10 @@ trait Implicits { self: Typer =>
       if (ret.isEmpty) {
         // Extensible[TypeVar, TypeVar, TypeVar] => Extensible[WildcardType, WildcardType, WildcardType]
         val approx = wildApprox(dealiased, null, Set.empty)
-        println()
-        println("Could not synthesize, try with approximated type")
-        println(approx)
-        println(approx.show)
+        //println()
+        //println("Could not synthesize, try with approximated type")
+        //println(approx)
+        //println(approx.show)
         approx match {
           case AppliedType(_, st :: lt :: vt :: Nil) => synthesize(determineLo(st), determineHi(lt), determineHi(vt))
           case _ => EmptyTree

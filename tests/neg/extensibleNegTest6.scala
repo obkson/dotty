@@ -1,9 +1,9 @@
-import dotty.records.Extensible
+import dotty.records.{Extensible, Record}
 
 object ExtensibleTest {
-  // AppliedType Function0[Selectable]. Concrete, but not a subtype of Selectable.
-  implicitly[Extensible[() => Selectable, "a", Int]] // error
+  // AppliedType Function0[Record]. Concrete, but not a subtype of Record.
+  implicitly[Extensible[() => Record, "a", Int]] // error
 
-  // ConstantType. Concrete, but not subtype of Selectable
+  // ConstantType. Concrete, but not subtype of Record
   implicitly[Extensible["hello", "a", Int]] // error
 }

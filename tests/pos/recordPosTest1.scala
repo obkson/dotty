@@ -24,6 +24,8 @@ object RecordPosTest1 {
     ("f1", 1) + ("f2", 2) + ("f3", 3) + ("f4", 4) + ("f5", 5) + ("f6",  6) + ("f7", 7) + ("f8", 8) +
     ("f9", 9) + ("f10", 10) + ("f11", 11) + ("f12", 12) + ("f13", 13)
 
+  def id[T](x: T) = x
+
   val v: Record {
     val f1: Int;
     val f2: Int;
@@ -40,6 +42,6 @@ object RecordPosTest1 {
     val f13: Int;
     val f14: Int;
     val f15: Int;
-  } = u + ("f14"->>14) + ("f15"->>15)
+  } = id(u + ("f14"->>14) + ("f15"->>15))
 
 }

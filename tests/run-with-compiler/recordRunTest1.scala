@@ -1,6 +1,6 @@
 import dotty.records._
 
-object RecordRunTest1 {
+object RecordRunTest2 {
 
   def main(args: Array[String]): Unit = {
 

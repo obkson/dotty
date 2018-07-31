@@ -1,12 +1,12 @@
-import dotty.records.Extensible
+import dotty.records.{Extensible, Record}
 
 
 object ExtensibleTest {
   // Extension type has to be a subtype of existing refinement type member
   class A
   class B extends A
-  implicitly[Extensible[Selectable{val a: String}, "a", Int]] // error
-  implicitly[Extensible[Selectable{val a: B}, "a", A]] // error
+  implicitly[Extensible[Record{val a: String}, "a", Int]] // error
+  implicitly[Extensible[Record{val a: B}, "a", A]] // error
 
   // The Nothing type is the bottom type containing *every* possible field. Must be rejected.
   implicitly[Extensible[Nothing, "a", Int]] // error
